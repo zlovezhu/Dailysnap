@@ -1,0 +1,79 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicepkg/aide/main/packages/aide-agent/.changesets/schema.json",
+  "productName": "DailySnap",
+  "version": "0.1.0",
+  "identifier": "com.dailysnap.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "DailySnap",
+        "url": "index.html",
+        "width": 380,
+        "height": 580,
+        "resizable": false,
+        "center": true,
+        "decorations": false,
+        "visible": true
+      },
+      {
+        "label": "float-ball",
+        "title": "",
+        "url": "float.html",
+        "width": 56,
+        "height": 56,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "x": 1300,
+        "y": 700
+      },
+      {
+        "label": "mini-chat",
+        "title": "",
+        "url": "mini.html",
+        "width": 300,
+        "height": 340,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true
+    },
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "sql": {
+      "preload": ["sqlite:dailysnap.db"]
+    }
+  }
+}

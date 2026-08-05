@@ -50,7 +50,15 @@ export function Cat({
 
   return (
     <motion.div
-      className={`relative inline-flex flex-col items-center ${className}`}
+      className={`relative ${className}`}
+      style={{
+        width: `${size}px !important`,
+        height: `${size}px !important`,
+        flexShrink: 0,
+        flexGrow: 0,
+        display: "block !important",
+        lineHeight: 0,
+      }}
       animate={
         staticPose ? { y: 0 } :
         mood === "happy" || mood === "satisfied"

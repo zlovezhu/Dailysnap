@@ -322,6 +322,9 @@ export function FloatBall() {
           transform: "translateX(-50%)",
           cursor: pointerRef.current.hasDragged ? "grabbing" : "pointer",
           zIndex: 2,
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
         }}
         animate={{
           y: mode === "compact" ? [0, -2, 0] : 0,

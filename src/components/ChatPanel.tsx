@@ -187,7 +187,7 @@ export function ChatPanel() {
           <div className="label-caps" style={{ color: "var(--text-tertiary)" }}>
             {onboarding ? "初次见面" : "现在"}
           </div>
-          <Cat mood={catMood} size={36} variant="head" hasNotification={false} />
+          <Cat mood={catMood} size={56} variant="full" hasNotification={false} />
         </div>
       </div>
 

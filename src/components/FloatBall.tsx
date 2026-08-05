@@ -464,13 +464,14 @@ export function FloatBall() {
           onClick={handleCatClick}
           onDoubleClick={openMain}
           style={{
-            width: "48px", minWidth: "48px",
-            background: "var(--text)",
+            width: "60px", minWidth: "60px",
+            background: "transparent",
             display: "flex", alignItems: "center", justifyContent: "center",
             cursor: "pointer", position: "relative",
+            flexShrink: 0,
           }}
         >
-          <Cat mood={followup.active ? "sleepy" : catMood} size={28} />
+          <Cat mood={followup.active ? "sleepy" : catMood} size={52} variant="full" />
         </div>
       </motion.div>
     </AnimatePresence>

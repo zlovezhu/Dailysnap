@@ -11,6 +11,7 @@ import { WeeklyPanel } from "./WeeklyPanel";
 import { StatsPanel } from "./StatsPanel";
 import { Cat, type CatMood } from "./Cat";
 import { useTheme } from "../hooks/useTheme";
+import { updateSetting as dbUpdateSetting, getAllSettings as dbGetAllSettings } from "../services/db";
 
 type Tab = "chat" | "timeline" | "report" | "weekly" | "stats";
 type ReportSubTab = "daily" | "weekly";
@@ -130,10 +131,10 @@ function ReminderSettings({ onClose }: { onClose: () => void }) {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    invoke<Record<string, string>>("get_all_settings")
+    dbGetAllSettings()
       .then((data) => {
         if (data.reminder_start_time) setStartTime(data.reminder_start_time);
-        if (data.reminder_interval_minutes) setInterval(data.reminder_interval_minutes);
+        if (data.reminder_interval_minutes) setInterval(String(data.reminder_interval_minutes));
         if (data.report_generate_time) setReportTime(data.report_generate_time);
       })
       .catch(() => {});
@@ -144,9 +145,14 @@ function ReminderSettings({ onClose }: { onClose: () => void }) {
     setSaving(true);
     setSaved(false);
     try {
-      await invoke("update_setting", { key: "reminder_start_time", value: startTime });
-      await invoke("update_setting", { key: "reminder_interval_minutes", value: interval });
-      await invoke("update_setting", { key: "report_generate_time", value: reportTime });
+      // Write to DB (primary source of truth)
+      await dbUpdateSetting("reminder_start_time", startTime);
+      await dbUpdateSetting("reminder_interval_minutes", interval);
+      await dbUpdateSetting("report_generate_time", reportTime);
+      // Also notify backend scheduler
+      await invoke("update_setting", { key: "reminder_start_time", value: startTime }).catch(() => {});
+      await invoke("update_setting", { key: "reminder_interval_minutes", value: interval }).catch(() => {});
+      await invoke("update_setting", { key: "report_generate_time", value: reportTime }).catch(() => {});
       setSaved(true);
       setTimeout(() => { setSaved(false); onClose(); }, 800);
     } catch (err) {
@@ -208,7 +214,7 @@ function AISettings({ onClose }: { onClose: () => void }) {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    invoke<Record<string, string>>("get_all_settings")
+    dbGetAllSettings()
       .then((data) => { if (data.api_key) setApiKey(data.api_key); })
       .catch(() => {});
   }, []);
@@ -218,7 +224,10 @@ function AISettings({ onClose }: { onClose: () => void }) {
     setSaving(true);
     setSaved(false);
     try {
-      await invoke("update_setting", { key: "api_key", value: apiKey });
+      // Write to DB (primary source of truth)
+      await dbUpdateSetting("api_key", apiKey);
+      // Also notify backend AI client
+      await invoke("update_setting", { key: "api_key", value: apiKey }).catch(() => {});
       setSaved(true);
       setTimeout(() => { setSaved(false); onClose(); }, 800);
     } catch (err) {
@@ -237,10 +246,12 @@ function AISettings({ onClose }: { onClose: () => void }) {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder="sk-..."
-            className="w-full px-3 py-2.5 text-sm rounded-md outline-none font-mono"
+            className="w-full px-3 text-sm rounded-md outline-none font-mono"
             style={{
               background: "var(--bg)", color: "var(--text)",
               border: "1px solid var(--border)", paddingRight: "36px",
+              paddingTop: "12px", paddingBottom: "12px",
+              height: "42px", fontSize: "13px",
             }}
           />
           <button
@@ -252,7 +263,7 @@ function AISettings({ onClose }: { onClose: () => void }) {
               border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "4px",
             }}
           >
-            {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
+            {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
           </button>
         </div>
       </Field>

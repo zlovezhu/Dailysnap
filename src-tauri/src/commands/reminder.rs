@@ -5,10 +5,10 @@ pub async fn show_float_ball(app: AppHandle) -> Result<(), String> {
     if let Some(float_win) = app.get_webview_window("float-ball") {
         // Ensure compact mode when returning to float ball.
         if let (Ok(old_pos), Ok(old_size)) = (float_win.outer_position(), float_win.outer_size()) {
-            let target_w: u32 = 56;
-            let target_h: u32 = 56;
-            let mut new_x = old_pos.x + old_size.width as i32 - target_w as i32;
-            let mut new_y = old_pos.y + old_size.height as i32 - target_h as i32;
+            let target_w: u32 = 240;
+            let target_h: u32 = 240;
+            let mut new_x = old_pos.x; // don't reposition, just resize
+            let mut new_y = old_pos.y;
             if new_x < 0 {
                 new_x = 0;
             }
@@ -51,16 +51,16 @@ pub async fn set_float_mode(app: AppHandle, mode: String) -> Result<(), String> 
     };
 
     let (target_w, target_h): (u32, u32) = match mode.as_str() {
-        "expanded" => (140, 150),
-        _ => (140, 150),
+        "expanded" => (240, 240),
+        _ => (240, 240),
     };
 
     let _old_pos = float_win.outer_position().map_err(|e| e.to_string())?;
     let _old_size = float_win.outer_size().map_err(|e| e.to_string())?;
 
     // Position at fixed bottom-right corner (logical points)
-    let new_x: f64 = 1300.0;
-    let new_y: f64 = 680.0;
+    let new_x: f64 = 550.0;
+    let new_y: f64 = 250.0;
 
     float_win
         .set_size(Size::Logical(LogicalSize::new(target_w as f64, target_h as f64)))

@@ -31,8 +31,8 @@
         "label": "float-ball",
         "title": "",
         "url": "float.html",
-        "width": 140,
-        "height": 150,
+        "width": 240,
+        "height": 240,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -40,8 +40,8 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": true,
-        "x": 1300,
-        "y": 680
+        "x": 1200,
+        "y": 600
       },
       {
         "label": "mini-chat",

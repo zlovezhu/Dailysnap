@@ -237,14 +237,9 @@ export function FloatBall() {
         if (!cancelled) setRecentRecordCount((remote || []).length);
       } catch { /* ignore */ }
 
-      // Sync window size to 140x150 on mount + apply macOS tweaks
+      // Sync window size on mount
       try {
-        // Multiple attempts to ensure size takes effect (Tauri dev may keep initial size)
-        for (let i = 0; i < 3; i++) {
-          await invoke("set_float_mode", { mode: "compact" });
-          await new Promise(r => setTimeout(r, 200));
-        }
-        await invoke("setup_float_window");
+        await invoke("set_float_mode", { mode: "compact" });
       } catch { /* ignore */ }
 
       // On app start: cat greets the user automatically (no need to hover first).
@@ -307,7 +302,7 @@ export function FloatBall() {
       onMouseUp={endPointer}
       onDoubleClick={openMain}
       style={{
-        width: "100%", height: "100%",
+        width: "240px", height: "240px",
         position: "relative",
         background: "transparent",
         overflow: "visible",
@@ -334,7 +329,7 @@ export function FloatBall() {
         }}
         transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
       >
-        <Cat mood={catMood} size={88} variant="full" hasNotification={hasUnread} />
+        <Cat mood={catMood} size={160} variant="full" hasNotification={hasUnread} />
       </motion.div>
 
       {/* Greeting bubble — visible in hover/input/talking states */}

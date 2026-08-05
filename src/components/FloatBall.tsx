@@ -238,11 +238,13 @@ export function FloatBall() {
       } catch { /* ignore */ }
 
       // On app start: cat greets the user automatically (no need to hover first).
+      // Delay 2.5s so the webview + image bundle have time to finish loading.
       const greetingTimer = window.setTimeout(() => {
+        if (document.readyState !== "complete") return;
         if (modeRef.current === "compact") {
           enterHover();
         }
-      }, 1200);
+      }, 2500);
 
       // Reminder trigger → directly enter input mode (cat says hello, no hover needed)
       const unlisten = await listen("reminder-trigger", () => {

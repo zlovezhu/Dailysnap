@@ -305,8 +305,10 @@ export function FloatBall() {
         justifyContent: "center",
       }}
     >
-      {/* Cat — always visible */}
-      <motion.div
+      {/* Cat — always visible. Two-layer centering: outer div does position+translate,
+          inner motion.div does y-only animation. If we put the y animation on the outer
+          div, framer-motion would append translateY() and break the centering. */}
+      <div
         onClick={onCatClick}
         onMouseDown={beginPointer}
         style={{
@@ -317,13 +319,16 @@ export function FloatBall() {
           cursor: pointerRef.current.hasDragged ? "grabbing" : "pointer",
           zIndex: 2,
         }}
-        animate={{
-          y: mode === "compact" ? [0, -2, 0] : 0,
-        }}
-        transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
       >
-        <Cat mood={catMood} size={160} variant="full" hasNotification={hasUnread} />
-      </motion.div>
+        <motion.div
+          animate={{
+            y: mode === "compact" ? [0, -2, 0] : 0,
+          }}
+          transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+        >
+          <Cat mood={catMood} size={160} variant="full" hasNotification={hasUnread} />
+        </motion.div>
+      </div>
 
       {/* Greeting bubble — visible in hover/input/talking states */}
       <AnimatePresence>

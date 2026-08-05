@@ -237,6 +237,18 @@ export function FloatBall() {
         if (!cancelled) setRecentRecordCount((remote || []).length);
       } catch { /* ignore */ }
 
+      // Sync window size to 130x140 on mount
+      try {
+        await invoke("set_float_mode", { mode: "compact" });
+      } catch { /* ignore */ }
+
+      // On app start: cat greets the user automatically (no need to hover first).
+      const greetingTimer = window.setTimeout(() => {
+        if (!cancelled && modeRef.current === "compact") {
+          enterHover();
+        }
+      }, 1200);
+
       // Reminder trigger → directly enter input mode (cat says hello, no hover needed)
       const unlisten = await listen("reminder-trigger", () => {
         const dynamicPrompt = getDynamicPromptByHour(new Date().getHours());
@@ -247,8 +259,14 @@ export function FloatBall() {
         setHasUnread(true);
         enterInput(dynamicPrompt);
       });
-      if (cancelled) return () => unlisten();
-      return () => unlisten();
+      if (cancelled) {
+        window.clearTimeout(greetingTimer);
+        return () => unlisten();
+      }
+      return () => {
+        window.clearTimeout(greetingTimer);
+        unlisten();
+      };
     };
 
     const cleanupPromise = init();
@@ -288,6 +306,10 @@ export function FloatBall() {
         position: "relative",
         background: "transparent",
         overflow: "visible",
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
       {/* Cat — always visible */}
@@ -308,7 +330,7 @@ export function FloatBall() {
         }}
         transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
       >
-        <Cat mood={catMood} size={96} variant="full" hasNotification={hasUnread} />
+        <Cat mood={catMood} size={88} variant="full" hasNotification={hasUnread} />
       </motion.div>
 
       {/* Greeting bubble — visible in hover/input/talking states */}

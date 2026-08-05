@@ -226,8 +226,12 @@ function AISettings({ onClose }: { onClose: () => void }) {
     try {
       // Write to DB (primary source of truth)
       await dbUpdateSetting("api_key", apiKey);
-      // Also notify backend AI client
-      await invoke("update_setting", { key: "api_key", value: apiKey }).catch(() => {});
+      // Also notify backend AI client (so agent_turn can use the key)
+      await invoke("sync_ai_config", {
+        apiKey,
+        baseUrl: "https://api.openai.com/v1",
+        model: "gpt-4o-mini",
+      }).catch((err) => console.error("sync_ai_config failed:", err));
       setSaved(true);
       setTimeout(() => { setSaved(false); onClose(); }, 800);
     } catch (err) {

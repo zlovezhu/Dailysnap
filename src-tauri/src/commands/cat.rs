@@ -3,6 +3,17 @@ use crate::services::ai_client::{AiClient, AgentAction};
 use crate::services::memory::{MemoryService, UserProfile};
 use serde::Serialize;
 
+#[tauri::command]
+pub async fn sync_ai_config(
+    ai_client: State<'_, AiClient>,
+    api_key: String,
+    base_url: String,
+    model: String,
+) -> Result<(), String> {
+    ai_client.update_config(&api_key, &base_url, &model).await;
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct CatStateView {
     pub mood: i32,

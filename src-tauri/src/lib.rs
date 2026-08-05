@@ -174,6 +174,7 @@ pub fn run() {
             commands::cat::get_memory_dir,
             commands::cat::write_long_term,
             commands::cat::write_daily_summary,
+            commands::cat::sync_ai_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DailySnap");

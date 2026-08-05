@@ -50,15 +50,8 @@ export function Cat({
 
   return (
     <motion.div
-      className={`relative ${className}`}
-      style={{
-        width: `${size}px !important`,
-        height: `${size}px !important`,
-        flexShrink: 0,
-        flexGrow: 0,
-        display: "block !important",
-        lineHeight: 0,
-      }}
+      className={`relative inline-flex ${className}`}
+      style={{ lineHeight: 0, verticalAlign: "middle" }}
       animate={
         staticPose ? { y: 0 } :
         mood === "happy" || mood === "satisfied"
@@ -78,6 +71,7 @@ export function Cat({
           : { duration: 1.5, repeat: Infinity, ease: "easeInOut" }
       }
     >
+      {/* speech bubble above the cat */}
       {speech && (
         <div
           className="absolute -top-2 left-full ml-2 px-3 py-1.5 rounded-xl text-xs whitespace-nowrap shadow-md pointer-events-none"
@@ -87,6 +81,7 @@ export function Cat({
         </div>
       )}
 
+      {/* notification dot */}
       {hasNotification && (
         <motion.span
           animate={{ scale: [1, 1.3, 1] }}
@@ -96,27 +91,37 @@ export function Cat({
         />
       )}
 
-      {imageFailed ? (
-        <CatSvg mood={mood} size={size} />
-      ) : (
-        <img
-          src={imageSrc}
-          alt="猫猫"
-          width={size}
-          height={size}
-          draggable={false}
-          onError={() => setImageFailed(true)}
-          style={{
-            width: size,
-            height: size,
-            objectFit: "contain",
-            objectPosition: "center center",
-            pointerEvents: "none",
-            userSelect: "none",
-            display: "block",
-          }}
-        />
-      )}
+      {/* size container — the motion parent doesn't control sizing */}
+      <div
+        style={{
+          width: size,
+          height: size,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          lineHeight: 0,
+        }}
+      >
+        {imageFailed ? (
+          <CatSvg mood={mood} size={size} />
+        ) : (
+          <img
+            src={imageSrc}
+            alt="猫猫"
+            draggable={false}
+            onError={() => setImageFailed(true)}
+            style={{
+              width: size,
+              height: size,
+              objectFit: "contain",
+              objectPosition: "center center",
+              pointerEvents: "none",
+              userSelect: "none",
+              display: "block",
+            }}
+          />
+        )}
+      </div>
     </motion.div>
   );
 }

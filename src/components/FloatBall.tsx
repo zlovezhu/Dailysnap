@@ -237,14 +237,9 @@ export function FloatBall() {
         if (!cancelled) setRecentRecordCount((remote || []).length);
       } catch { /* ignore */ }
 
-      // Sync window size on mount
-      try {
-        await invoke("set_float_mode", { mode: "compact" });
-      } catch { /* ignore */ }
-
       // On app start: cat greets the user automatically (no need to hover first).
       const greetingTimer = window.setTimeout(() => {
-        if (!cancelled && modeRef.current === "compact") {
+        if (modeRef.current === "compact") {
           enterHover();
         }
       }, 1200);
@@ -304,7 +299,6 @@ export function FloatBall() {
       style={{
         width: "240px", height: "240px",
         position: "relative",
-        background: "transparent",
         overflow: "visible",
         display: "flex",
         alignItems: "center",
@@ -317,18 +311,14 @@ export function FloatBall() {
         onMouseDown={beginPointer}
         style={{
           position: "absolute",
-          bottom: 0,
-          left: "50%",
-          transform: "translateX(-50%)",
-          cursor: pointerRef.current.hasDragged ? "grabbing" : "pointer",
-          zIndex: 2,
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
+          cursor: pointerRef.current.hasDragged ? "grabbing" : "pointer",
+          zIndex: 2,
         }}
         animate={{
           y: mode === "compact" ? [0, -2, 0] : 0,
-          rotate: mode === "happy" || mode === "satisfied" ? [0, -2, 2, 0] : 0,
         }}
         transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
       >

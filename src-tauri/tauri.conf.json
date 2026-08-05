@@ -35,13 +35,13 @@
         "height": 240,
         "resizable": false,
         "decorations": false,
-        "transparent": true,
+        "transparent": false,
         "shadow": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": true,
-        "x": 1200,
-        "y": 600
+        "x": 1230,
+        "y": 716
       },
       {
         "label": "mini-chat",

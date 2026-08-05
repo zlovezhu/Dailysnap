@@ -309,7 +309,7 @@ export function FloatBall() {
 
   const showPrompt = followup.active ? followup.question : prompt;
 
-  /* === COMPACT: just the cat === */
+  /* === COMPACT: just the cat (no chrome) === */
   if (mode === "compact") {
     return (
       <motion.div
@@ -319,17 +319,20 @@ export function FloatBall() {
         onMouseLeave={endPointer}
         onClick={handleCompactClick}
         onDoubleClick={openMain}
-        animate={hasUnread ? { scale: [1, 1.08, 1] } : { scale: 1 }}
-        transition={hasUnread ? { duration: 1.5, repeat: Infinity } : {}}
+        animate={hasUnread ? { y: [0, -3, 0] } : { y: 0 }}
+        transition={hasUnread ? { duration: 1.2, repeat: Infinity } : {}}
         style={{
           width: "100%", height: "100%",
           display: "flex", alignItems: "center", justifyContent: "center",
+          background: "transparent",
           cursor: "grab", position: "relative",
+          overflow: "visible",
         }}
       >
         <Cat
           mood={hasUnread ? "curious" : catMood}
-          size={48}
+          size={96}
+          variant="full"
           hasNotification={hasUnread}
         />
       </motion.div>

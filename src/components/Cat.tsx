@@ -101,8 +101,8 @@ export function Cat({
           style={{
             width: size,
             height: size,
-            objectFit: variant === "full" ? "contain" : "cover",
-            objectPosition: variant === "head" ? "center 22%" : "center",
+            objectFit: "contain",
+            objectPosition: "center center",
             pointerEvents: "none",
             userSelect: "none",
             display: "block",

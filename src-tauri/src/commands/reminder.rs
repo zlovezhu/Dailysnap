@@ -52,7 +52,7 @@ pub async fn set_float_mode(app: AppHandle, mode: String) -> Result<(), String> 
 
     let (target_w, target_h): (u32, u32) = match mode.as_str() {
         "expanded" => (480, 340),
-        _ => (56, 56), // compact
+        _ => (110, 120), // compact
     };
 
     let old_pos = float_win.outer_position().map_err(|e| e.to_string())?;

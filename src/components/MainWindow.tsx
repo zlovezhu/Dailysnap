@@ -448,7 +448,7 @@ export function MainWindow() {
         style={{ padding: "8px 12px 4px 12px" }}
       >
         <div className="flex items-center" style={{ gap: "8px" }}>
-          <Cat mood={catMood} size={24} hasNotification={false} />
+          <Cat mood={catMood} size={28} variant="head" hasNotification={false} />
           <span
             data-tauri-drag-region
             className="label-caps"

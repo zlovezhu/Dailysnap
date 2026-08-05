@@ -1,26 +1,153 @@
-/* Minimal global styles - most styling is done inline */
+@import "tailwindcss";
+
+/* === DESIGN TOKENS === */
+/* Inspired by editorial / paper-like tools (Bear, Reflect).
+   Avoids the AI purple+dark pattern. Warm-tinted neutrals. */
+
+:root {
+  /* Surfaces — warm cream paper feel */
+  --bg: #f5f3ec;          /* Page background, warm cream */
+  --bg-secondary: #ebe7da;/* Slightly darker, used for sticky areas */
+  --surface: #fbf9f3;     /* Card/panel surface, lighter than bg */
+  --surface-hover: #efeadd;
+
+  /* Text — warm ink, never pure black */
+  --text: #1f1d18;        /* Primary text */
+  --text-secondary: #5d564b;
+  --text-tertiary: #918b7d;
+
+  /* Borders — subtle, slightly warm */
+  --border: #ddd6c4;
+  --border-hover: #b9b1a0;
+
+  /* Accent — ink (墨). Use sparingly. */
+  --accent: #1f1d18;      /* same as text — monochrome emphasis */
+  --accent-hover: #39342a;
+  --accent-soft: #e3decb; /* subtle warm background highlight */
+  --accent-text: #1f1d18;
+
+  /* Semantic */
+  --success: #4d6c39;
+  --success-soft: #e3ead4;
+  --warning: #8e6620;
+  --warning-soft: #ede0c4;
+  --danger: #8e3d3d;
+  --danger-soft: #ead4d4;
+
+  /* Typography scale (modular, 1.25 ratio) */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 28px;
+
+  /* Spatial rhythm — multiples of 4 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Hairline shadow only — minimal */
+  --shadow-sm: 0 1px 0 rgba(31, 29, 24, 0.03);
+  --shadow-md: 0 1px 2px rgba(31, 29, 24, 0.06);
+}
+
+.dark {
+  --bg: #15140f;
+  --bg-secondary: #1c1b15;
+  --surface: #1e1c16;
+  --surface-hover: #28261f;
+
+  --text: #e9e4d4;        /* Warm off-white */
+  --text-secondary: #aaa48f;
+  --text-tertiary: #6a6557;
+
+  --border: #2e2c24;
+  --border-hover: #44413a;
+
+  --accent: #e9e4d4;
+  --accent-hover: #f7f2e2;
+  --accent-soft: #2a2820;
+  --accent-text: #e9e4d4;
+
+  --success: #88b06a;
+  --success-soft: #2b3420;
+  --warning: #d4a55a;
+  --warning-soft: #332913;
+  --danger: #d6857c;
+  --danger-soft: #342220;
+
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* === RESET === */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-html, body, #root {
+html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
   background: transparent;
 }
 
-::-webkit-scrollbar {
-  width: 4px;
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: var(--text-base);
+  font-feature-settings: "kern" 1, "ss01" 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+body { transition: background-color 0.25s ease, color 0.25s ease; }
 
+/* === SCROLLBAR — minimal === */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #ddd;
-  border-radius: 2px;
+  background: var(--border-hover);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* === EDITORIAL DETAILS === */
+/* Tabular numbers where data aligns */
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* Subtle text selection */
+::selection { background: var(--accent-soft); color: var(--text); }
+
+/* Mono for time/data */
+.mono {
+  font-family: "SF Mono", ui-monospace, "Menlo", monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Editorial label: uppercase + tracked, smaller */
+.label-caps {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+  font-weight: 500;
 }

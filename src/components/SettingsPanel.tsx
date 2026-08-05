@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Moon, Sun, Eye, EyeOff } from "lucide-react";
 import { getAllSettings, updateSetting as dbUpdateSetting } from "../services/db";
+import { useTheme } from "../hooks/useTheme";
 
 interface Settings {
   reminderStartTime: string;
@@ -19,11 +21,11 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 const INTERVAL_OPTIONS = [
-  { value: 0, label: "每 30 秒（测试）" },
-  { value: 60, label: "每 1 小时" },
-  { value: 90, label: "每 1.5 小时" },
-  { value: 120, label: "每 2 小时" },
-  { value: 180, label: "每 3 小时" },
+  { value: 0, label: "30 秒（测试）" },
+  { value: 60, label: "1 小时" },
+  { value: 90, label: "1.5 小时" },
+  { value: 120, label: "2 小时" },
+  { value: 180, label: "3 小时" },
 ];
 
 export function SettingsPanel() {
@@ -32,11 +34,10 @@ export function SettingsPanel() {
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [saveWarning, setSaveWarning] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const { theme, setTheme } = useTheme();
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
+  useEffect(() => { loadSettings(); }, []);
 
   const loadSettings = async () => {
     try {
@@ -49,9 +50,7 @@ export function SettingsPanel() {
         apiKey: data.api_key || "",
       });
       setIsDirty(false);
-    } catch {
-      // Use default
-    }
+    } catch { /* use defaults */ }
   };
 
   const updateSetting = (key: keyof Settings, value: string | number | boolean) => {
@@ -59,58 +58,32 @@ export function SettingsPanel() {
     setIsDirty(true);
     setSaved(false);
     setSaveError("");
-    setSaveWarning("");
   };
 
   const camelToSnake = (str: string) =>
     str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
   const formatError = (error: unknown) => {
-    if (error instanceof Error) {
-      return error.message;
-    }
-    if (typeof error === "string") {
-      return error;
-    }
-    try {
-      return JSON.stringify(error);
-    } catch {
-      return "未知错误";
-    }
+    if (error instanceof Error) return error.message;
+    if (typeof error === "string") return error;
+    try { return JSON.stringify(error); } catch { return "未知错误"; }
   };
 
   const saveAllSettings = async () => {
     if (!isDirty || isSaving) return;
-
     setIsSaving(true);
     setSaveError("");
-    setSaveWarning("");
-
     try {
       const entries = Object.entries(settings) as Array<[keyof Settings, Settings[keyof Settings]]>;
       const runtimeSyncErrors: string[] = [];
-
       for (const [key, value] of entries) {
         const dbKey = camelToSnake(key);
         const dbValue = String(value);
-
-        try {
-          await dbUpdateSetting(dbKey, dbValue);
-        } catch (dbError) {
-          throw new Error(`字段 ${dbKey} 本地落库失败：${formatError(dbError)}`);
-        }
-
-        try {
-          await invoke("update_setting", {
-            key: dbKey,
-            value: dbValue,
-          });
-        } catch (invokeError) {
-          runtimeSyncErrors.push(`${dbKey}: ${formatError(invokeError)}`);
-        }
+        try { await dbUpdateSetting(dbKey, dbValue); }
+        catch (dbError) { throw new Error(`字段 ${dbKey} 本地落库失败：${formatError(dbError)}`); }
+        try { await invoke("update_setting", { key: dbKey, value: dbValue }); }
+        catch (invokeError) { runtimeSyncErrors.push(`${dbKey}: ${formatError(invokeError)}`); }
       }
-
-      // Read-back verification to avoid false-success UI.
       const reloaded = await getAllSettings();
       const verified: Settings = {
         reminderStartTime: reloaded.reminder_start_time || "09:30",
@@ -119,62 +92,96 @@ export function SettingsPanel() {
         holidayDisable: (reloaded.holiday_disable || "true") === "true",
         apiKey: reloaded.api_key || "",
       };
-
       const matched =
         verified.reminderStartTime === settings.reminderStartTime &&
         verified.reportGenerateTime === settings.reportGenerateTime &&
         verified.reminderIntervalMinutes === settings.reminderIntervalMinutes &&
         verified.holidayDisable === settings.holidayDisable &&
         verified.apiKey === settings.apiKey;
-
-      if (!matched) {
-        setSaveError("本地保存校验失败，请重试");
-        setSaved(false);
-        return;
-      }
+      if (!matched) { setSaveError("本地保存校验失败，请重试"); setSaved(false); return; }
 
       setSettings(verified);
       setSaved(true);
       setIsDirty(false);
-
-      if (runtimeSyncErrors.length > 0) {
-        setSaveWarning(`已保存到本地，部分实时同步失败（重启后生效）：${runtimeSyncErrors[0]}`);
-      }
-
       setTimeout(() => setSaved(false), 1500);
     } catch (error) {
       setSaved(false);
       setSaveError(`保存失败：${formatError(error)}`);
-    } finally {
-      setIsSaving(false);
-    }
+    } finally { setIsSaving(false); }
   };
 
-  const inputStyle: React.CSSProperties = {
+  const inputStyle = {
     width: "100%",
-    padding: "8px 12px",
-    fontSize: "13px",
-    border: "1px solid #e5e5e5",
-    borderRadius: "6px",
+    padding: "9px 12px",
+    fontSize: "var(--text-base)",
+    background: "var(--surface)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-md)",
     outline: "none",
   };
 
-  const labelStyle: React.CSSProperties = {
-    display: "block",
-    fontSize: "13px",
-    color: "#555",
-    marginBottom: "6px",
-  };
-
   return (
-    <div style={{ padding: "16px", overflowY: "auto", height: "100%" }}>
-      <div style={{ marginBottom: "24px" }}>
-        <h3 style={{ fontSize: "12px", color: "#999", fontWeight: 500, marginBottom: "12px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-          提醒设置
-        </h3>
+    <div style={{ padding: "20px 20px 24px 20px", overflowY: "auto", height: "100%" }}>
+      {/* 主题 */}
+      <section style={{ marginBottom: "28px" }}>
+        <div className="label-caps" style={{ color: "var(--text-tertiary)", marginBottom: "12px" }}>
+          外观
+        </div>
+        <div style={{ display: "flex", gap: "6px" }}>
+          <button
+            onClick={() => setTheme("light")}
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+              padding: "10px",
+              fontSize: "var(--text-sm)",
+              borderRadius: "var(--radius-md)",
+              border: theme === "light" ? "1px solid var(--text)" : "1px solid var(--border)",
+              background: theme === "light" ? "var(--surface)" : "transparent",
+              color: theme === "light" ? "var(--text)" : "var(--text-tertiary)",
+              cursor: "pointer",
+              fontWeight: theme === "light" ? 500 : 400,
+            }}
+          >
+            <Sun size={13} /> 亮色
+          </button>
+          <button
+            onClick={() => setTheme("dark")}
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+              padding: "10px",
+              fontSize: "var(--text-sm)",
+              borderRadius: "var(--radius-md)",
+              border: theme === "dark" ? "1px solid var(--text)" : "1px solid var(--border)",
+              background: theme === "dark" ? "var(--surface)" : "transparent",
+              color: theme === "dark" ? "var(--text)" : "var(--text-tertiary)",
+              cursor: "pointer",
+              fontWeight: theme === "dark" ? 500 : 400,
+            }}
+          >
+            <Moon size={13} /> 暗色
+          </button>
+        </div>
+      </section>
+
+      {/* 提醒 */}
+      <section style={{ marginBottom: "28px" }}>
+        <div className="label-caps" style={{ color: "var(--text-tertiary)", marginBottom: "14px" }}>
+          提醒
+        </div>
 
         <div style={{ marginBottom: "16px" }}>
-          <label style={labelStyle}>每日开始提醒时间</label>
+          <label style={{ display: "block", fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: "6px" }}>
+            每日开始时间
+          </label>
           <input
             type="time"
             value={settings.reminderStartTime}
@@ -184,20 +191,24 @@ export function SettingsPanel() {
         </div>
 
         <div style={{ marginBottom: "16px" }}>
-          <label style={labelStyle}>提醒周期</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+          <label style={{ display: "block", fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: "8px" }}>
+            提醒周期
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" }}>
             {INTERVAL_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => updateSetting("reminderIntervalMinutes", opt.value)}
                 style={{
-                  padding: "8px",
-                  fontSize: "12px",
-                  border: settings.reminderIntervalMinutes === opt.value ? "1px solid #534AB7" : "1px solid #e5e5e5",
-                  borderRadius: "6px",
-                  background: settings.reminderIntervalMinutes === opt.value ? "#f3f0ff" : "#fff",
-                  color: settings.reminderIntervalMinutes === opt.value ? "#534AB7" : "#555",
+                  padding: "9px 8px",
+                  fontSize: "var(--text-sm)",
+                  background: settings.reminderIntervalMinutes === opt.value ? "var(--text)" : "var(--surface)",
+                  color: settings.reminderIntervalMinutes === opt.value ? "var(--bg)" : "var(--text-secondary)",
+                  border: "1px solid",
+                  borderColor: settings.reminderIntervalMinutes === opt.value ? "var(--text)" : "var(--border)",
+                  borderRadius: "var(--radius-md)",
                   cursor: "pointer",
+                  fontWeight: settings.reminderIntervalMinutes === opt.value ? 500 : 400,
                 }}
               >
                 {opt.label}
@@ -207,7 +218,9 @@ export function SettingsPanel() {
         </div>
 
         <div style={{ marginBottom: "16px" }}>
-          <label style={labelStyle}>自动生成日报时间</label>
+          <label style={{ display: "block", fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: "6px" }}>
+            日报时间
+          </label>
           <input
             type="time"
             value={settings.reportGenerateTime}
@@ -216,89 +229,111 @@ export function SettingsPanel() {
           />
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0" }}>
+        <div
+          className="flex items-center justify-between"
+          style={{ padding: "8px 0" }}
+        >
           <div>
-            <p style={{ fontSize: "13px", color: "#555" }}>节假日自动关闭</p>
-            <p style={{ fontSize: "11px", color: "#999", marginTop: "2px" }}>法定节假日不提醒</p>
+            <p style={{ fontSize: "var(--text-sm)", color: "var(--text)", marginBottom: "2px" }}>节假日自动关闭</p>
+            <p style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>法定节假日不提醒</p>
           </div>
           <button
             onClick={() => updateSetting("holidayDisable", !settings.holidayDisable)}
             style={{
               position: "relative",
-              width: "36px",
-              height: "20px",
-              borderRadius: "10px",
+              width: "38px",
+              height: "22px",
+              borderRadius: "999px",
               border: "none",
-              background: settings.holidayDisable ? "#534AB7" : "#ccc",
+              background: settings.holidayDisable ? "var(--text)" : "var(--border)",
               cursor: "pointer",
               transition: "background 0.2s",
+              flexShrink: 0,
             }}
           >
             <span
               style={{
                 position: "absolute",
-                top: "2px",
-                left: settings.holidayDisable ? "18px" : "2px",
+                top: "3px",
+                left: settings.holidayDisable ? "19px" : "3px",
                 width: "16px",
                 height: "16px",
                 borderRadius: "50%",
-                background: "#fff",
+                background: "var(--bg)",
                 transition: "left 0.2s",
               }}
             />
           </button>
         </div>
-      </div>
+      </section>
 
-      <div>
-        <h3 style={{ fontSize: "12px", color: "#999", fontWeight: 500, marginBottom: "12px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-          AI 设置
-        </h3>
-
-        <div style={{ marginBottom: "16px" }}>
-          <label style={labelStyle}>API Key</label>
-          <input
-            type="password"
-            value={settings.apiKey}
-            onChange={(e) => updateSetting("apiKey", e.target.value)}
-            placeholder="sk-..."
-            style={{ ...inputStyle, fontFamily: "monospace" }}
-          />
+      {/* AI */}
+      <section style={{ marginBottom: "28px" }}>
+        <div className="label-caps" style={{ color: "var(--text-tertiary)", marginBottom: "12px" }}>
+          AI
         </div>
-      </div>
+        <div>
+          <label style={{ display: "block", fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: "6px" }}>
+            API Key
+          </label>
+          <div style={{ position: "relative" }}>
+            <input
+              type={showKey ? "text" : "password"}
+              value={settings.apiKey}
+              onChange={(e) => updateSetting("apiKey", e.target.value)}
+              placeholder="sk-..."
+              style={{ ...inputStyle, fontFamily: "monospace", paddingRight: "36px" }}
+            />
+            <button
+              onClick={() => setShowKey(!showKey)}
+              style={{
+                position: "absolute",
+                right: "8px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                border: "none",
+                background: "transparent",
+                color: "var(--text-tertiary)",
+                cursor: "pointer",
+                padding: "4px",
+              }}
+            >
+              {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          </div>
+          <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "6px" }}>
+            留空时使用本地规则生成；配置后可启用 AI 追问和日报生成
+          </p>
+        </div>
+      </section>
 
-      <div style={{ position: "sticky", bottom: 0, background: "#fff", paddingTop: "12px", paddingBottom: "4px" }}>
+      {/* Save */}
+      <div style={{ paddingTop: "12px", borderTop: "1px solid var(--border)" }}>
         <button
           onClick={saveAllSettings}
           disabled={!isDirty || isSaving}
           style={{
             width: "100%",
-            padding: "9px 12px",
-            borderRadius: "8px",
+            padding: "11px",
+            fontSize: "var(--text-sm)",
+            fontWeight: 500,
+            background: isDirty && !isSaving ? "var(--text)" : "var(--border)",
+            color: isDirty && !isSaving ? "var(--bg)" : "var(--text-tertiary)",
             border: "none",
-            background: !isDirty || isSaving ? "#d9d9d9" : "#534AB7",
-            color: "#fff",
-            fontSize: "13px",
-            fontWeight: 600,
-            cursor: !isDirty || isSaving ? "not-allowed" : "pointer",
+            borderRadius: "var(--radius-md)",
+            cursor: isDirty && !isSaving ? "pointer" : "not-allowed",
           }}
         >
           {isSaving ? "保存中..." : "保存设置"}
         </button>
-
         {saved && (
-          <div style={{ textAlign: "center", fontSize: "12px", color: "#4caf50", padding: "6px 0 0" }}>
-            设置已保存 ✓
+          <div style={{ textAlign: "center", fontSize: "12px", color: "var(--success)", padding: "8px 0 0" }}>
+            ✓ 已保存
           </div>
         )}
         {saveError && (
-          <div style={{ textAlign: "center", fontSize: "12px", color: "#d32f2f", padding: "6px 0 0" }}>
+          <div style={{ textAlign: "center", fontSize: "12px", color: "var(--danger)", padding: "8px 0 0" }}>
             {saveError}
-          </div>
-        )}
-        {saveWarning && (
-          <div style={{ textAlign: "center", fontSize: "12px", color: "#ef6c00", padding: "6px 0 0" }}>
-            {saveWarning}
           </div>
         )}
       </div>

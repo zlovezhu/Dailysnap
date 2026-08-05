@@ -11,6 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -19,8 +20,11 @@
         "width": 380,
         "height": 580,
         "resizable": false,
-        "center": true,
+        "x": 50,
+        "y": 200,
         "decorations": false,
+        "transparent": true,
+        "shadow": false,
         "visible": true
       },
       {
@@ -35,7 +39,7 @@
         "shadow": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "visible": false,
+        "visible": true,
         "x": 1300,
         "y": 700
       },
@@ -47,6 +51,8 @@
         "height": 340,
         "resizable": false,
         "decorations": false,
+        "transparent": true,
+        "shadow": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": false

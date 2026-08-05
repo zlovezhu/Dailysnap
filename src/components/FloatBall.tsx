@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   canOpenOnDoubleClick,
   DialogueItem,
@@ -8,10 +9,10 @@ import {
   isFinalReply,
   pickFallbackPrompt,
   shouldStartDrag,
-  truncateForHint,
 } from "../utils/floatInteraction";
+import { Cat, type CatMood } from "./Cat";
 
-type FloatMode = "compact" | "hint" | "expanded";
+type FloatMode = "compact" | "expanded";
 
 interface RecordRow {
   content: string;
@@ -29,106 +30,67 @@ interface FollowupState {
   replies: string[];
 }
 
-const DEFAULT_FOLLOWUP_STATE: FollowupState = {
-  active: false,
-  round: 0,
-  maxRounds: 3,
-  baseContent: "",
-  question: "",
-  prompts: [],
-  replies: [],
+const DEFAULT_FOLLOWUP: FollowupState = {
+  active: false, round: 0, maxRounds: 3,
+  baseContent: "", question: "", prompts: [], replies: [],
 };
 
 const STORAGE_KEY = "dailysnap_float_dialogues_v1";
 const CLICK_DELAY_MS = 220;
-const AUTO_HIDE_MS = 5 * 60 * 1000;
-const FADE_OUT_MS = 420;
-const REPLAY_INTERVAL_MS = 3000;
-const REPLAY_MAX_COUNT = 3;
+const AUTO_COLLAPSE_MS = 3 * 60 * 1000; // auto-collapse after 3 min idle
 
 function getTodayKey() {
   const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-function loadDialoguesFromStorage(): DialogueItem[] {
+function loadDialogues(): DialogueItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as { date: string; items: DialogueItem[] };
-    if (!parsed || parsed.date !== getTodayKey() || !Array.isArray(parsed.items)) {
-      return [];
-    }
+    if (!parsed || parsed.date !== getTodayKey() || !Array.isArray(parsed.items)) return [];
     return parsed.items;
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
-function saveDialoguesToStorage(items: DialogueItem[]) {
-  const payload = {
-    date: getTodayKey(),
-    items,
-  };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+function saveDialogues(items: DialogueItem[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ date: getTodayKey(), items }));
 }
 
 function mergeDialogues(base: DialogueItem[], incoming: DialogueItem[]) {
   const map = new Map<string, DialogueItem>();
-  [...base, ...incoming].forEach((item) => {
-    const key = `${item.createdAt}|${item.content}`;
-    map.set(key, item);
-  });
+  [...base, ...incoming].forEach((item) => map.set(`${item.createdAt}|${item.content}`, item));
   return [...map.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+interface AgentAction {
+  action_type: string;
+  message: string;
+  tool_calls: Array<{ name: string; arguments: Record<string, unknown> }>;
 }
 
 export function FloatBall() {
   const [mode, setMode] = useState<FloatMode>("compact");
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [showCloseButton, setShowCloseButton] = useState(false);
-  const [hintPrompt, setHintPrompt] = useState("嗨~ 现在在忙什么呀？");
+  const [prompt, setPrompt] = useState("喵~ 现在在忙什么呀？");
+  const [recentRecordCount, setRecentRecordCount] = useState(0);
+  const [hasUnread, setHasUnread] = useState(false);
+  const [catMood, setCatMood] = useState<CatMood>("calm");
+  const [followup, setFollowup] = useState<FollowupState>(DEFAULT_FOLLOWUP);
   const [, setDialogues] = useState<DialogueItem[]>([]);
-  const [isHintFading, setIsHintFading] = useState(false);
-  const [hasUnreadReminder, setHasUnreadReminder] = useState(false);
-  const [latestReminderText, setLatestReminderText] = useState("该记录一下当前进展啦");
-  const [followup, setFollowup] = useState<FollowupState>(DEFAULT_FOLLOWUP_STATE);
 
   const modeRef = useRef<FloatMode>("compact");
-  const followupActiveRef = useRef(false);
-
-  const pointerStateRef = useRef({
-    isDown: false,
-    hasDragged: false,
-    startX: 0,
-    startY: 0,
-  });
-
+  const followupRef = useRef(false);
+  const pointerRef = useRef({ isDown: false, hasDragged: false, startX: 0, startY: 0 });
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const clickTimerRef = useRef<number | null>(null);
-  const hideTimerRef = useRef<number | null>(null);
-  const fadeTimerRef = useRef<number | null>(null);
-  const hideDeadlineRef = useRef<number | null>(null);
-  const hideRemainingRef = useRef<number>(AUTO_HIDE_MS);
-  const replayTimersRef = useRef<number[]>([]);
-  const missedReminderCountRef = useRef<number>(0);
+  const collapseTimerRef = useRef<number | null>(null);
 
-  const quickReplies = ["写文件", "开会", "改需求", "排查问题"];
-
-  const clearHintTimers = () => {
-    if (hideTimerRef.current) {
-      window.clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
-    if (fadeTimerRef.current) {
-      window.clearTimeout(fadeTimerRef.current);
-      fadeTimerRef.current = null;
-    }
-    hideDeadlineRef.current = null;
-  };
+  const quickRepliesBase = ["写文件", "开会", "改需求", "排查问题"];
+  const quickRepliesBusy = ["刚写完文档", "开完会了", "需求改了", "问题解决了"];
+  const quickReplies = recentRecordCount > 0 ? quickRepliesBusy : quickRepliesBase;
 
   const setModeWithWindow = async (next: FloatMode) => {
     modeRef.current = next;
@@ -136,373 +98,190 @@ export function FloatBall() {
     await invoke("set_float_mode", { mode: next }).catch(() => {});
   };
 
-  const startHintAutoHide = (durationMs = AUTO_HIDE_MS) => {
-    clearHintTimers();
-    hideRemainingRef.current = durationMs;
-    hideDeadlineRef.current = Date.now() + durationMs;
-    setIsHintFading(false);
-
-    hideTimerRef.current = window.setTimeout(() => {
-      setIsHintFading(true);
-      fadeTimerRef.current = window.setTimeout(async () => {
-        setIsHintFading(false);
-        setShowCloseButton(false);
-        await setModeWithWindow("compact");
-      }, FADE_OUT_MS);
-    }, durationMs);
-  };
-
-  const pauseHintAutoHide = () => {
-    if (mode !== "hint" || !hideDeadlineRef.current) return;
-    const remaining = Math.max(0, hideDeadlineRef.current - Date.now());
-    hideRemainingRef.current = remaining;
-    clearHintTimers();
-  };
-
-  const resumeHintAutoHide = () => {
-    if (mode !== "hint") return;
-    const remaining = Math.max(0, hideRemainingRef.current || AUTO_HIDE_MS);
-    startHintAutoHide(remaining);
-  };
-
-  const cancelReplayQueue = () => {
-    replayTimersRef.current.forEach((id) => window.clearTimeout(id));
-    replayTimersRef.current = [];
-    missedReminderCountRef.current = 0;
-  };
-
-  const scheduleReplayReminders = () => {
-    const replayCount = Math.min(missedReminderCountRef.current, REPLAY_MAX_COUNT);
-    missedReminderCountRef.current = 0;
-    if (replayCount <= 0) return;
-
-    replayTimersRef.current = [];
-    for (let i = 0; i < replayCount; i += 1) {
-      const timer = window.setTimeout(async () => {
-        const dynamicPrompt = getDynamicPromptByHour(new Date().getHours());
-        await enterHintMode(dynamicPrompt, false);
-      }, REPLAY_INTERVAL_MS * i);
-      replayTimersRef.current.push(timer);
-    }
-  };
-
-  const appendDialogue = (content: string) => {
-    const nextItem: DialogueItem = {
-      content,
-      createdAt: new Date().toISOString(),
-    };
-
-    setDialogues((prev) => {
-      const merged = mergeDialogues(prev, [nextItem]);
-      saveDialoguesToStorage(merged);
-      return merged;
-    });
-  };
-
-  const loadTodayDialogues = async () => {
-    const localItems = loadDialoguesFromStorage();
-    try {
-      const today = getTodayKey();
-      const remote = await invoke<RecordRow[]>("get_records_by_date", { date: today });
-      const remoteItems: DialogueItem[] = (remote || []).flatMap((item) => {
-        const createdAt = item.created_at || new Date().toISOString();
-        const rows: DialogueItem[] = [];
-        if (item.content?.trim()) {
-          rows.push({ content: item.content.trim(), createdAt });
-        }
-        if (item.user_followup_reply?.trim()) {
-          rows.push({ content: item.user_followup_reply.trim(), createdAt });
-        }
-        return rows;
-      });
-
-      const merged = mergeDialogues(localItems, remoteItems);
-      setDialogues(merged);
-      saveDialoguesToStorage(merged);
-    } catch {
-      setDialogues(localItems);
-    }
-  };
-
-  const enterHintMode = async (prompt: string, clearUnreadDot: boolean) => {
-    setHintPrompt(prompt);
-    setShowCloseButton(true);
-    modeRef.current = "hint";
-    setMode("hint");
-    setIsHintFading(false);
-    if (clearUnreadDot) {
-      setHasUnreadReminder(false);
-    }
-    await invoke("set_float_mode", { mode: "hint" }).catch(() => {});
-    startHintAutoHide(AUTO_HIDE_MS);
-  };
-
-  useEffect(() => {
-    modeRef.current = mode;
-  }, [mode]);
-
-  useEffect(() => {
-    followupActiveRef.current = followup.active;
-  }, [followup.active]);
-
-  useEffect(() => {
-    const init = async () => {
-      await invoke("set_float_mode", { mode: "compact" }).catch(() => {});
-      await loadTodayDialogues();
-
-      const unlistenReminder = await listen("reminder-trigger", async () => {
-        const dynamicPrompt = getDynamicPromptByHour(new Date().getHours());
-        setLatestReminderText(dynamicPrompt);
-        setHasUnreadReminder(true);
-
-        if (followupActiveRef.current || modeRef.current === "expanded") {
-          if (followupActiveRef.current) {
-            missedReminderCountRef.current += 1;
-          }
-          return;
-        }
-      });
-
-      return () => {
-        unlistenReminder();
-      };
-    };
-
-    const cleanupPromise = init();
-    return () => {
-      clearHintTimers();
-      cancelReplayQueue();
-      if (clickTimerRef.current) {
-        window.clearTimeout(clickTimerRef.current);
-      }
-      cleanupPromise.then((cleanup) => cleanup && cleanup());
-    };
-  }, []);
-
-  useEffect(() => {
-    if (mode === "hint") {
-      startHintAutoHide(AUTO_HIDE_MS);
-    } else {
-      clearHintTimers();
-      setIsHintFading(false);
-    }
-  }, [mode]);
-
-  const beginPointerTrack = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest("input") || target.closest("textarea") || target.closest("button")) return;
-
-    pointerStateRef.current = {
-      isDown: true,
-      hasDragged: false,
-      startX: e.screenX,
-      startY: e.screenY,
-    };
-  };
-
-  const handlePointerMove = async (e: React.MouseEvent) => {
-    if (!pointerStateRef.current.isDown || pointerStateRef.current.hasDragged) return;
-
-    const shouldDrag = shouldStartDrag(
-      { x: pointerStateRef.current.startX, y: pointerStateRef.current.startY },
-      { x: e.screenX, y: e.screenY },
-      6
-    );
-
-    if (!shouldDrag) return;
-
-    pointerStateRef.current.hasDragged = true;
-    await invoke("start_drag_window", { label: "float-ball" }).catch(() => {});
-  };
-
-  const endPointerTrack = () => {
-    pointerStateRef.current.isDown = false;
-  };
-
-  const openMain = async () => {
-    if (clickTimerRef.current) {
-      window.clearTimeout(clickTimerRef.current);
-      clickTimerRef.current = null;
-    }
-    if (!canOpenOnDoubleClick(pointerStateRef.current.hasDragged)) return;
-
-    setShowCloseButton(false);
-    setIsHintFading(false);
-    modeRef.current = "compact";
-    setMode("compact");
-    await invoke("set_float_mode", { mode: "compact" }).catch(() => {});
-    await invoke("open_main_window").catch(() => {});
-  };
-
-  const collapseToCompact = async () => {
-    setShowCloseButton(false);
-    setIsHintFading(false);
-    await setModeWithWindow("compact");
-  };
-
-  const handleCompactClick = () => {
-    if (pointerStateRef.current.hasDragged) return;
-    if (clickTimerRef.current) {
-      window.clearTimeout(clickTimerRef.current);
-    }
-
-    clickTimerRef.current = window.setTimeout(async () => {
-      if (hasUnreadReminder) {
-        setHasUnreadReminder(false);
-        await setModeWithWindow("expanded");
-        requestAnimationFrame(() => {
-          inputRef.current?.focus();
-          inputRef.current?.setSelectionRange(inputRef.current.value.length, inputRef.current.value.length);
-        });
-      } else {
-        const fallbackPrompt = pickFallbackPrompt();
-        await enterHintMode(fallbackPrompt, true);
-      }
-      clickTimerRef.current = null;
-    }, CLICK_DELAY_MS);
-  };
-
-  const handleSideBallClick = async () => {
-    if (pointerStateRef.current.hasDragged) return;
-
-    if (mode === "hint") {
-      await handleHintClick();
-      return;
-    }
-
-    if (mode === "expanded") {
-      await collapseToCompact();
-    }
-  };
-
-  const handleHintClick = async () => {
-    if (mode !== "hint") return;
-    cancelReplayQueue();
-    setHasUnreadReminder(false);
-    await setModeWithWindow("expanded");
+  const focusInput = () => {
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.setSelectionRange(inputRef.current.value.length, inputRef.current.value.length);
     });
   };
 
-  const closeCurrentHint = async () => {
-    setHasUnreadReminder(false);
+  const enterExpanded = async (initialPrompt?: string) => {
+    if (initialPrompt) setPrompt(initialPrompt);
+    setHasUnread(false);
+    await setModeWithWindow("expanded");
+    focusInput();
+    // Auto-collapse after idle
+    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+    collapseTimerRef.current = window.setTimeout(() => {
+      collapseToCompact();
+    }, AUTO_COLLAPSE_MS);
+  };
+
+  const collapseToCompact = async () => {
+    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+    setFollowup(DEFAULT_FOLLOWUP);
+    setInput("");
+    await setModeWithWindow("compact");
+  };
+
+  const resetCollapseTimer = () => {
+    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+    collapseTimerRef.current = window.setTimeout(() => {
+      collapseToCompact();
+    }, AUTO_COLLAPSE_MS);
+  };
+
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { followupRef.current = followup.active; }, [followup.active]);
+
+  useEffect(() => {
+    const init = async () => {
+      await invoke("set_float_mode", { mode: "compact" }).catch(() => {});
+      // Load today's dialogues for context
+      const localItems = loadDialogues();
+      try {
+        const today = getTodayKey();
+        const remote = await invoke<RecordRow[]>("get_records_by_date", { date: today });
+        const remoteItems: DialogueItem[] = (remote || []).flatMap((item) => {
+          const createdAt = item.created_at || new Date().toISOString();
+          const rows: DialogueItem[] = [];
+          if (item.content?.trim()) rows.push({ content: item.content.trim(), createdAt });
+          if (item.user_followup_reply?.trim()) rows.push({ content: item.user_followup_reply.trim(), createdAt });
+          return rows;
+        });
+        const merged = mergeDialogues(localItems, remoteItems);
+        setDialogues(merged);
+        saveDialogues(merged);
+        setRecentRecordCount(merged.length);
+      } catch { setDialogues(localItems); }
+
+      // Listen for reminders → directly expand
+      const unlistenReminder = await listen("reminder-trigger", async () => {
+        const dynamicPrompt = getDynamicPromptByHour(new Date().getHours());
+        setHasUnread(true);
+        setCatMood("curious");
+        // If already expanded or in followup, just update prompt
+        if (followupRef.current || modeRef.current === "expanded") {
+          setPrompt(dynamicPrompt);
+          return;
+        }
+        // Directly expand — no hint bubble
+        await enterExpanded(dynamicPrompt);
+      });
+      return () => { unlistenReminder(); };
+    };
+
+    const cleanupPromise = init();
+    return () => {
+      if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+      if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+      cleanupPromise.then((c) => c && c());
+    };
+  }, []);
+
+  // Pointer / drag handling
+  const beginPointer = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("input") || target.closest("textarea") || target.closest("button")) return;
+    pointerRef.current = { isDown: true, hasDragged: false, startX: e.screenX, startY: e.screenY };
+  };
+
+  const handlePointerMove = async (e: React.MouseEvent) => {
+    if (!pointerRef.current.isDown || pointerRef.current.hasDragged) return;
+    if (!shouldStartDrag(
+      { x: pointerRef.current.startX, y: pointerRef.current.startY },
+      { x: e.screenX, y: e.screenY }, 6
+    )) return;
+    pointerRef.current.hasDragged = true;
+    await invoke("start_drag_window", { label: "float-ball" }).catch(() => {});
+  };
+
+  const endPointer = () => { pointerRef.current.isDown = false; };
+
+  const openMain = async () => {
+    if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+    if (!canOpenOnDoubleClick(pointerRef.current.hasDragged)) return;
+    clickTimerRef.current = null;
+    await collapseToCompact();
+    await invoke("open_main_window").catch(() => {});
+  };
+
+  // Compact click → expand
+  const handleCompactClick = () => {
+    if (pointerRef.current.hasDragged) return;
+    if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = window.setTimeout(async () => {
+      const fallbackPrompt = pickFallbackPrompt();
+      await enterExpanded(fallbackPrompt);
+      clickTimerRef.current = null;
+    }, CLICK_DELAY_MS);
+  };
+
+  // Cat sidebar click in expanded → collapse
+  const handleCatClick = async () => {
+    if (pointerRef.current.hasDragged) return;
     await collapseToCompact();
   };
 
-  const finalizeRecord = async (
-    baseContent: string,
-    replies: string[],
-    prompts: string[],
-    forcedHintPrompt?: string
-  ) => {
-    const userFollowupReply = replies.length > 0 ? replies.join(" | ") : null;
-    const aiFollowup = prompts.length > 0 ? prompts.join(" | ") : null;
-
-    await invoke("save_record", {
-      content: baseContent,
-      aiQuestion: hintPrompt,
-      aiFollowup,
-      userFollowupReply,
-    });
-
-    const summary = userFollowupReply ? `${baseContent}（补充：${replies[replies.length - 1]}）` : baseContent;
-    appendDialogue(summary);
-
-    setFollowup(DEFAULT_FOLLOWUP_STATE);
-    setInput("");
-
-    await setModeWithWindow("hint");
-    if (forcedHintPrompt) {
-      setHintPrompt(forcedHintPrompt);
-    }
-
-    if (missedReminderCountRef.current > 0) {
-      scheduleReplayReminders();
-    }
-  };
-
+  // Send message via agent_turn (uses function calling)
   const sendRecord = async () => {
     const content = input.trim();
     if (!content || sending) return;
-
     setSending(true);
+    resetCollapseTimer();
+
     try {
-      if (!followup.active) {
-        const aiReply = await invoke<string>("ai_chat", {
-          userMessage: content,
-          step: "first_reply",
-        });
-
-        if (isFinalReply(aiReply)) {
-          await finalizeRecord(content, [], []);
-        } else {
-          setFollowup({
-            active: true,
-            round: 1,
-            maxRounds: 3,
-            baseContent: content,
-            question: aiReply,
-            prompts: [aiReply],
-            replies: [],
-          });
-          setInput("");
-          requestAnimationFrame(() => inputRef.current?.focus());
-        }
-        return;
-      }
-
-      const nextReplies = [...followup.replies, content];
-      const nextRound = followup.round + 1;
-
-      if (nextRound > followup.maxRounds) {
-        await finalizeRecord(
-          followup.baseContent,
-          nextReplies,
-          followup.prompts,
-          "已达到追问上限，先帮你收束到当前记录。"
-        );
-        return;
-      }
-
-      const aiReply = await invoke<string>("ai_chat", {
-        userMessage: `初始记录：${followup.baseContent}\n用户补充：${nextReplies.join("；")}`,
-        step: "first_reply",
+      // Use the new agent_turn command
+      const result = await invoke<AgentAction>("agent_turn", {
+        userMessage: content,
+        mode: null,
       });
 
-      if (isFinalReply(aiReply)) {
-        await finalizeRecord(followup.baseContent, nextReplies, followup.prompts);
+      // Update cat mood
+      if (result.action_type === "save_record") {
+        setCatMood("happy");
+        setTimeout(() => setCatMood("calm"), 3000);
+      } else if (result.action_type === "chat") {
+        setCatMood("satisfied");
+        setTimeout(() => setCatMood("calm"), 3000);
+      }
+
+      // If AI decided to save, we're done — show confirmation
+      if (result.action_type === "save_record" || isFinalReply(result.message)) {
+        appendDialogue(content);
+        setFollowup(DEFAULT_FOLLOWUP);
+        setInput("");
+        setPrompt(result.message || "好的，记下来啦~");
         return;
       }
 
-      if (nextRound >= followup.maxRounds) {
-        await finalizeRecord(
-          followup.baseContent,
-          nextReplies,
-          [...followup.prompts, aiReply],
-          "已达到追问上限，先帮你收束到当前记录。"
-        );
-        return;
-      }
-
-      setFollowup((prev) => ({
-        ...prev,
-        round: nextRound,
-        question: aiReply,
-        prompts: [...prev.prompts, aiReply],
-        replies: nextReplies,
-      }));
+      // AI wants to follow up — enter followup mode
+      setFollowup({
+        active: true,
+        round: 1,
+        maxRounds: 3,
+        baseContent: content,
+        question: result.message,
+        prompts: [result.message],
+        replies: [],
+      });
       setInput("");
-      requestAnimationFrame(() => inputRef.current?.focus());
+      setPrompt(result.message);
+      focusInput();
     } catch {
-      await finalizeRecord(
-        followup.active ? followup.baseContent : content,
-        followup.active ? [...followup.replies, content] : [],
-        followup.prompts,
-        "网络波动，已先按当前内容记录。"
-      ).catch(() => {});
+      // Fallback: save directly
+      await invoke("save_record", {
+        content,
+        aiQuestion: prompt,
+        aiFollowup: null,
+        userFollowupReply: null,
+      }).catch(() => {});
+      appendDialogue(content);
+      setInput("");
+      setPrompt("好的，记下来啦~");
+      setCatMood("happy");
+      setTimeout(() => setCatMood("calm"), 3000);
     } finally {
       setSending(false);
     }
@@ -510,382 +289,187 @@ export function FloatBall() {
 
   const endFollowupNow = async () => {
     if (!followup.active) return;
-    await finalizeRecord(
-      followup.baseContent,
-      followup.replies,
-      followup.prompts,
-      "已结束追问，可继续补记或查看最近记录。"
-    );
+    setFollowup(DEFAULT_FOLLOWUP);
+    setPrompt("好啦，记完了~ 有新进展再找我喵");
   };
 
   const fillQuickReply = (text: string) => {
     setInput(text);
-    requestAnimationFrame(() => {
-      if (!inputRef.current) return;
-      inputRef.current.focus();
-      inputRef.current.setSelectionRange(text.length, text.length);
+    focusInput();
+  };
+
+  const appendDialogue = (content: string) => {
+    const nextItem: DialogueItem = { content, createdAt: new Date().toISOString() };
+    setDialogues((prev) => {
+      const merged = mergeDialogues(prev, [nextItem]);
+      saveDialogues(merged);
+      return merged;
     });
   };
 
-  const showPrompt = followup.active ? followup.question : hintPrompt;
+  const showPrompt = followup.active ? followup.question : prompt;
 
+  /* === COMPACT: just the cat === */
   if (mode === "compact") {
     return (
-      <div
-        onMouseDown={beginPointerTrack}
+      <motion.div
+        onMouseDown={beginPointer}
         onMouseMove={handlePointerMove}
-        onMouseUp={endPointerTrack}
-        onMouseLeave={endPointerTrack}
+        onMouseUp={endPointer}
+        onMouseLeave={endPointer}
         onClick={handleCompactClick}
         onDoubleClick={openMain}
-        onMouseEnter={async () => {
-          if (!hasUnreadReminder) return;
-          if (modeRef.current !== "compact") return;
-          await enterHintMode(latestReminderText, false);
-        }}
+        animate={hasUnread ? { scale: [1, 1.08, 1] } : { scale: 1 }}
+        transition={hasUnread ? { duration: 1.5, repeat: Infinity } : {}}
         style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#1f1f1f",
-          borderRadius: "12px",
-          cursor: "grab",
-          position: "relative",
+          width: "100%", height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "grab", position: "relative",
         }}
       >
-        {hasUnreadReminder && (
-          <span
-            style={{
-              position: "absolute",
-              top: "6px",
-              right: "6px",
-              width: "8px",
-              height: "8px",
-              borderRadius: "50%",
-              background: "#ff4d4f",
-              boxShadow: "0 0 0 1px rgba(255,255,255,0.9)",
-            }}
-          />
-        )}
-        <ClockIcon />
-      </div>
+        <Cat
+          mood={hasUnread ? "curious" : catMood}
+          size={48}
+          hasNotification={hasUnread}
+        />
+      </motion.div>
     );
   }
 
-  if (mode === "hint") {
-    return (
-      <div
-        onMouseDown={beginPointerTrack}
+  /* === EXPANDED: input panel === */
+  return (
+    <AnimatePresence mode="wait">
+      <motion.div
+        key="expanded"
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.2 }}
+        onMouseDown={beginPointer}
         onMouseMove={handlePointerMove}
-        onMouseUp={endPointerTrack}
-        onMouseLeave={async () => {
-          endPointerTrack();
-          await collapseToCompact();
-        }}
+        onMouseUp={endPointer}
+        onMouseLeave={() => { endPointer(); }}
         style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          background: "transparent",
-          position: "relative",
-          fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif",
-          opacity: isHintFading ? 0 : 1,
-          transform: "translateX(0)",
-          transition: `opacity ${FADE_OUT_MS}ms ease, transform 180ms ease`,
+          width: "100%", height: "100%",
+          display: "flex", alignItems: "stretch",
+          overflow: "hidden", position: "relative",
+          background: "var(--bg)", borderRadius: "12px",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.18)",
         }}
       >
+        {/* Content area */}
         <div
           style={{
-            position: "relative",
-            marginRight: "8px",
-            maxWidth: "calc(100% - 74px)",
-            overflow: "visible",
-          }}
-          onMouseEnter={() => {
-            setShowCloseButton(true);
-            pauseHintAutoHide();
-          }}
-          onMouseLeave={() => {
-            setShowCloseButton(false);
-            resumeHintAutoHide();
+            flex: 1, minWidth: 0, padding: "12px",
+            display: "flex", flexDirection: "column", gap: "8px",
+            cursor: "grab", overflowY: "auto", overflowX: "hidden",
           }}
         >
-          <div
-            onClick={handleHintClick}
-            style={{
-              background: "#f3f3f3",
-              borderRadius: "20px",
-              padding: "9px 16px",
-              color: "#111",
-              fontSize: "16px",
-              lineHeight: "1.35",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              cursor: "pointer",
-              border: "1px solid #d7d7d7",
-              boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-            }}
-          >
-            {truncateForHint(latestReminderText, 28)}
+          {/* Prompt header */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <div style={{ fontSize: "12px", color: "var(--text)", lineHeight: "1.4", fontWeight: 500 }}>
+              {showPrompt}
+            </div>
+            {followup.active && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-tertiary)", letterSpacing: "0.05em" }}>
+                  追问 {followup.round}/{followup.maxRounds}
+                </div>
+                <button
+                  onClick={endFollowupNow}
+                  style={{
+                    border: "none", background: "transparent",
+                    color: "var(--text-tertiary)", fontSize: "10px",
+                    padding: 0, cursor: "pointer",
+                  }}
+                >
+                  结束追问
+                </button>
+              </div>
+            )}
           </div>
 
-          {showCloseButton && (
-            <button
-              onMouseDownCapture={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                closeCurrentHint();
-              }}
-              style={{
-                position: "absolute",
-                top: "-6px",
-                left: "-6px",
-                width: "20px",
-                height: "20px",
-                borderRadius: "50%",
-                border: "1px solid #c6c6c6",
-                background: "#d8d8d8",
-                color: "#111",
-                fontSize: "14px",
-                lineHeight: "18px",
-                padding: 0,
-                cursor: "pointer",
-                zIndex: 20,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              ×
-            </button>
+          {/* Quick replies — only when not in followup */}
+          {!followup.active && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" }}>
+              {quickReplies.map((text) => (
+                <button
+                  key={text}
+                  onClick={() => fillQuickReply(text)}
+                  style={{
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--text-secondary)",
+                    borderRadius: "999px",
+                    fontSize: "10px",
+                    padding: "3px 8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
           )}
-        </div>
 
-        <div
-          onClick={handleSideBallClick}
-          onDoubleClick={openMain}
-          style={{
-            width: "56px",
-            minWidth: "56px",
-            height: "56px",
-            background: "#1f1f1f",
-            borderRadius: "12px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "grab",
-            position: "relative",
-          }}
-        >
-          {hasUnreadReminder && (
-            <span
+          {/* Input + send */}
+          <div style={{ display: "flex", gap: "6px", alignItems: "stretch", marginTop: "auto" }}>
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendRecord();
+                }
+              }}
+              onFocus={resetCollapseTimer}
+              placeholder="输入信息..."
+              rows={2}
               style={{
-                position: "absolute",
-                top: "8px",
-                right: "8px",
-                width: "8px",
-                height: "8px",
-                borderRadius: "50%",
-                background: "#ff4d4f",
-                boxShadow: "0 0 0 1px rgba(255,255,255,0.9)",
+                flex: 1,
+                border: "1px solid var(--border)",
+                borderRadius: "8px",
+                padding: "6px 10px",
+                fontSize: "12px",
+                background: "var(--surface)",
+                color: "var(--text)",
+                outline: "none", resize: "none", lineHeight: "1.4",
               }}
             />
-          )}
-          <ClockIcon />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      onMouseDown={beginPointerTrack}
-      onMouseMove={handlePointerMove}
-      onMouseUp={endPointerTrack}
-      onMouseLeave={() => {
-        endPointerTrack();
-      }}
-      style={{
-        width: "100%",
-        height: "100%",
-        background: "#ffffff",
-        border: "1px solid #dcdcdc",
-        borderRadius: "10px",
-        display: "flex",
-        alignItems: "stretch",
-        overflow: "hidden",
-        position: "relative",
-        boxSizing: "border-box",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif",
-        opacity: isHintFading ? 0 : 1,
-        transform: "translateX(4px)",
-        transition: `opacity ${FADE_OUT_MS}ms ease, transform 220ms ease`,
-      }}
-    >
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          padding: "10px",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "flex-start",
-          gap: "6px",
-          cursor: "grab",
-          overflowY: "auto",
-          overflowX: "hidden",
-          boxSizing: "border-box",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "8px",
-            minHeight: "22px",
-          }}
-        >
-          <div style={{ fontSize: "13px", color: "#333", lineHeight: "1.4", fontWeight: 500 }}>{showPrompt}</div>
-        </div>
-
-        {followup.active && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "2px" }}>
-            <div style={{ fontSize: "11px", color: "#3a3a3a" }}>追问 {followup.round}/{followup.maxRounds}</div>
             <button
-              onClick={endFollowupNow}
+              onClick={sendRecord}
+              disabled={!input.trim() || sending}
               style={{
                 border: "none",
-                background: "transparent",
-                color: "#8a8a8a",
+                background: !input.trim() || sending ? "var(--border)" : "var(--text)",
+                color: "var(--bg)",
+                borderRadius: "8px",
+                padding: "0 12px",
                 fontSize: "11px",
-                padding: 0,
-                cursor: "pointer",
+                cursor: !input.trim() || sending ? "not-allowed" : "pointer",
               }}
             >
-              结束追问
+              发送
             </button>
           </div>
-        )}
-
-        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-          {quickReplies.map((text) => (
-            <button
-              key={text}
-              onClick={() => fillQuickReply(text)}
-              style={{
-                border: "1px solid #d2d2d2",
-                background: "#f5f5f5",
-                color: "#2f2f2f",
-                borderRadius: "12px",
-                fontSize: "11px",
-                padding: "4px 8px",
-                cursor: "pointer",
-              }}
-            >
-              {text}
-            </button>
-          ))}
         </div>
 
-        <div style={{ display: "flex", gap: "6px", alignItems: "stretch" }}>
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onFocus={() => pauseHintAutoHide()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendRecord();
-              }
-            }}
-            placeholder="输入信息"
-            rows={2}
-            style={{
-              flex: 1,
-              border: "1px solid #e3e3e3",
-              borderRadius: "12px",
-              padding: "6px 10px",
-              fontSize: "12px",
-              outline: "none",
-              resize: "none",
-              lineHeight: "1.4",
-            }}
-          />
-          <button
-            onClick={sendRecord}
-            disabled={!input.trim() || sending}
-            style={{
-              border: "none",
-              background: !input.trim() || sending ? "#cfcfcf" : "#222",
-              color: "#fff",
-              borderRadius: "12px",
-              padding: "0 12px",
-              fontSize: "12px",
-              cursor: !input.trim() || sending ? "not-allowed" : "pointer",
-            }}
-          >
-            发送
-          </button>
+        {/* Cat sidebar — always visible, click to collapse */}
+        <div
+          onClick={handleCatClick}
+          onDoubleClick={openMain}
+          style={{
+            width: "48px", minWidth: "48px",
+            background: "var(--text)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", position: "relative",
+          }}
+        >
+          <Cat mood={followup.active ? "sleepy" : catMood} size={28} />
         </div>
-      </div>
-
-      <div
-        onClick={handleSideBallClick}
-        onDoubleClick={openMain}
-        style={{
-          width: "56px",
-          minWidth: "56px",
-          background: "#1f1f1f",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "grab",
-          position: "relative",
-        }}
-      >
-        {hasUnreadReminder && (
-          <span
-            style={{
-              position: "absolute",
-              top: "8px",
-              right: "8px",
-              width: "8px",
-              height: "8px",
-              borderRadius: "50%",
-              background: "#ff4d4f",
-              boxShadow: "0 0 0 1px rgba(255,255,255,0.9)",
-            }}
-          />
-        )}
-        <ClockIcon />
-      </div>
-    </div>
-  );
-}
-
-function ClockIcon() {
-  return (
-    <svg
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="white"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{ pointerEvents: "none" }}
-    >
-      <circle cx="12" cy="12" r="9" />
-      <polyline points="12,7 12,12 15.5,14" />
-    </svg>
+      </motion.div>
+    </AnimatePresence>
   );
 }

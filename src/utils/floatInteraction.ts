@@ -44,19 +44,19 @@ export function formatHHmm(ts: string): string {
 }
 
 export function getDynamicPromptByHour(hour: number): string {
-  if (hour >= 6 && hour < 11) return "早上好，先记一句你现在在做什么？";
-  if (hour >= 11 && hour < 14) return "中午好，现在的主要进展是什么？";
-  if (hour >= 14 && hour < 18) return "下午好，当前最重要的任务是什么？";
-  if (hour >= 18 && hour < 23) return "晚上好，今天还有哪些收尾工作？";
-  return "夜深了，简单记录一下当前事项吧。";
+  if (hour >= 6 && hour < 11) return "喵~ 早上好，今天打算做什么呀？";
+  if (hour >= 11 && hour < 14) return "中午了，刚做完的事跟我说一句？";
+  if (hour >= 14 && hour < 18) return "下午好~ 现在的进展到哪一步了？";
+  if (hour >= 18 && hour < 23) return "晚上好~ 今天还剩什么要收尾的？";
+  return "夜深了，简单写一句吧，明早看到会谢谢你。";
 }
 
 const FALLBACK_PROMPTS = [
-  "快捷记录：写一句当前进展。",
-  "快速补记：你现在在做什么？",
-  "临时记录：先记关键词，稍后再补充。",
-  "点我速记：当前任务的一句话版本。",
-  "轻量记录：先写一句，不打断节奏。",
+  "喵~ 写一句你刚做完的事吧",
+  "在忙什么呀？跟我说说~",
+  "记一条今天的小进展？",
+  "写下来就放心了~",
+  "想偷懒也告诉我一声喵",
 ];
 
 export function pickFallbackPrompt(randomValue = Math.random()): string {

@@ -51,8 +51,7 @@ pub async fn set_float_mode(app: AppHandle, mode: String) -> Result<(), String> 
     };
 
     let (target_w, target_h): (u32, u32) = match mode.as_str() {
-        "expanded" => (420, 320),
-        "hint" => (420, 80),
+        "expanded" => (480, 340),
         _ => (56, 56), // compact
     };
 

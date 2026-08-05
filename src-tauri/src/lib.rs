@@ -7,6 +7,8 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::menu::{Menu, MenuItem};
 use tauri_plugin_sql::{Migration, MigrationKind};
 use services::ai_client::AiClient;
+use services::memory::MemoryService;
+use std::sync::Arc;
 
 pub fn run() {
     let migrations = vec![
@@ -58,7 +60,12 @@ pub fn run() {
             Some(vec![]),
         ))
         .plugin(tauri_plugin_clipboard_manager::init())
-        .manage(AiClient::new())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .manage({
+            let mem = Arc::new(MemoryService::new());
+            AiClient::new(mem.clone())
+        })
         .setup(|app| {
             // Build tray menu
             let quit = MenuItem::with_id(app, "quit", "退出 DailySnap", true, None::<&str>)?;
@@ -157,6 +164,16 @@ pub fn run() {
             commands::reminder::trigger_test_reminder,
             commands::reminder::start_drag_window,
             commands::reminder::copy_to_clipboard,
+            commands::devtools::switch_tab,
+            commands::cat::agent_turn,
+            commands::cat::get_cat_state,
+            commands::cat::mood_decay_tick,
+            commands::cat::update_profile,
+            commands::cat::get_profile,
+            commands::cat::is_onboarded,
+            commands::cat::get_memory_dir,
+            commands::cat::write_long_term,
+            commands::cat::write_daily_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DailySnap");

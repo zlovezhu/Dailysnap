@@ -13,7 +13,6 @@ export async function getDb(): Promise<Database> {
 async function initializeDatabase() {
   if (!db) return;
 
-  // Create tables if they don't exist
   await db.execute(`
     CREATE TABLE IF NOT EXISTS records (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,9 +21,17 @@ async function initializeDatabase() {
       ai_followup TEXT,
       user_followup_reply TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-      date TEXT NOT NULL DEFAULT (date('now', 'localtime'))
+      date TEXT NOT NULL DEFAULT (date('now', 'localtime')),
+      category TEXT DEFAULT 'other'
     )
   `);
+
+  // Add category column if missing (for existing DBs)
+  try {
+    await db.execute("ALTER TABLE records ADD COLUMN category TEXT DEFAULT 'other'");
+  } catch {
+    // Column already exists
+  }
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS daily_reports (
@@ -37,13 +44,22 @@ async function initializeDatabase() {
   `);
 
   await db.execute(`
+    CREATE TABLE IF NOT EXISTS weekly_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      week_start TEXT NOT NULL UNIQUE,
+      week_end TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    )
+  `);
+
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     )
   `);
 
-  // Insert default settings if not exist
   const defaults = [
     ["reminder_start_time", "09:30"],
     ["reminder_interval_minutes", "120"],
@@ -62,7 +78,7 @@ async function initializeDatabase() {
   }
 }
 
-// --- Records ---
+export type RecordCategory = "work" | "meeting" | "study" | "communication" | "life" | "other";
 
 export interface RecordRow {
   id: number;
@@ -72,19 +88,21 @@ export interface RecordRow {
   user_followup_reply: string | null;
   created_at: string;
   date: string;
+  category?: string;
 }
 
 export async function saveRecord(
   content: string,
   aiQuestion?: string | null,
   aiFollowup?: string | null,
-  userFollowupReply?: string | null
+  userFollowupReply?: string | null,
+  category?: string
 ): Promise<void> {
   const database = await getDb();
   await database.execute(
-    `INSERT INTO records (content, ai_question, ai_followup, user_followup_reply) 
-     VALUES ($1, $2, $3, $4)`,
-    [content, aiQuestion || null, aiFollowup || null, userFollowupReply || null]
+    `INSERT INTO records (content, ai_question, ai_followup, user_followup_reply, category)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [content, aiQuestion || null, aiFollowup || null, userFollowupReply || null, category || "other"]
   );
 }
 
@@ -95,6 +113,28 @@ export async function getRecordsByDate(date: string): Promise<RecordRow[]> {
     [date]
   );
   return rows;
+}
+
+export async function getRecordsByDateRange(startDate: string, endDate: string): Promise<RecordRow[]> {
+  const database = await getDb();
+  const rows = await database.select<RecordRow[]>(
+    "SELECT * FROM records WHERE date >= $1 AND date <= $2 ORDER BY created_at ASC",
+    [startDate, endDate]
+  );
+  return rows;
+}
+
+export async function getAllRecordDates(): Promise<string[]> {
+  const database = await getDb();
+  const rows = await database.select<{ date: string }[]>(
+    "SELECT DISTINCT date FROM records ORDER BY date DESC LIMIT 90"
+  );
+  return rows.map((r) => r.date);
+}
+
+export async function updateRecordCategory(id: number, category: string): Promise<void> {
+  const database = await getDb();
+  await database.execute("UPDATE records SET category = $1 WHERE id = $2", [category, id]);
 }
 
 // --- Daily Reports ---
@@ -126,6 +166,55 @@ export async function getDailyReport(date: string): Promise<DailyReportRow | nul
     [date]
   );
   return rows.length > 0 ? rows[0] : null;
+}
+
+export async function getDailyReports(limit = 30): Promise<DailyReportRow[]> {
+  const database = await getDb();
+  const rows = await database.select<DailyReportRow[]>(
+    "SELECT * FROM daily_reports ORDER BY date DESC LIMIT $1",
+    [limit]
+  );
+  return rows;
+}
+
+// --- Weekly Reports ---
+
+export interface WeeklyReportRow {
+  id: number;
+  week_start: string;
+  week_end: string;
+  content: string;
+  created_at: string;
+}
+
+export async function saveWeeklyReport(
+  weekStart: string,
+  weekEnd: string,
+  content: string
+): Promise<void> {
+  const database = await getDb();
+  await database.execute(
+    "INSERT OR REPLACE INTO weekly_reports (week_start, week_end, content) VALUES ($1, $2, $3)",
+    [weekStart, weekEnd, content]
+  );
+}
+
+export async function getWeeklyReport(weekStart: string): Promise<WeeklyReportRow | null> {
+  const database = await getDb();
+  const rows = await database.select<WeeklyReportRow[]>(
+    "SELECT * FROM weekly_reports WHERE week_start = $1",
+    [weekStart]
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+export async function getWeeklyReports(limit = 12): Promise<WeeklyReportRow[]> {
+  const database = await getDb();
+  const rows = await database.select<WeeklyReportRow[]>(
+    "SELECT * FROM weekly_reports ORDER BY week_start DESC LIMIT $1",
+    [limit]
+  );
+  return rows;
 }
 
 // --- Settings ---

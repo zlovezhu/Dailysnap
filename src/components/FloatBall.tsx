@@ -237,9 +237,14 @@ export function FloatBall() {
         if (!cancelled) setRecentRecordCount((remote || []).length);
       } catch { /* ignore */ }
 
-      // Sync window size to 130x140 on mount
+      // Sync window size to 140x150 on mount + apply macOS tweaks
       try {
-        await invoke("set_float_mode", { mode: "compact" });
+        // Multiple attempts to ensure size takes effect (Tauri dev may keep initial size)
+        for (let i = 0; i < 3; i++) {
+          await invoke("set_float_mode", { mode: "compact" });
+          await new Promise(r => setTimeout(r, 200));
+        }
+        await invoke("setup_float_window");
       } catch { /* ignore */ }
 
       // On app start: cat greets the user automatically (no need to hover first).
@@ -306,7 +311,6 @@ export function FloatBall() {
         position: "relative",
         background: "transparent",
         overflow: "visible",
-        borderRadius: "50%",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",

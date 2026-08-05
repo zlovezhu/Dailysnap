@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, LogicalSize, LogicalPosition};
 
 #[tauri::command]
 pub async fn show_float_ball(app: AppHandle) -> Result<(), String> {
@@ -15,8 +15,8 @@ pub async fn show_float_ball(app: AppHandle) -> Result<(), String> {
             if new_y < 0 {
                 new_y = 0;
             }
-            let _ = float_win.set_size(Size::Physical(PhysicalSize::new(target_w, target_h)));
-            let _ = float_win.set_position(Position::Physical(PhysicalPosition::new(new_x, new_y)));
+            let _ = float_win.set_size(Size::Logical(LogicalSize::new(target_w as f64, target_h as f64)));
+            let _ = float_win.set_position(Position::Logical(LogicalPosition::new(new_x as f64, new_y as f64)));
         }
         float_win.show().map_err(|e| e.to_string())?;
     }
@@ -51,29 +51,22 @@ pub async fn set_float_mode(app: AppHandle, mode: String) -> Result<(), String> 
     };
 
     let (target_w, target_h): (u32, u32) = match mode.as_str() {
-        "expanded" => (130, 140), // legacy, not used anymore (handled by FloatBall CSS)
-        _ => (130, 140), // compact — both modes share same window; cat + bubble/input via overflow
+        "expanded" => (140, 150),
+        _ => (140, 150),
     };
 
-    let old_pos = float_win.outer_position().map_err(|e| e.to_string())?;
-    let old_size = float_win.outer_size().map_err(|e| e.to_string())?;
+    let _old_pos = float_win.outer_position().map_err(|e| e.to_string())?;
+    let _old_size = float_win.outer_size().map_err(|e| e.to_string())?;
 
-    // Keep bottom-right anchor fixed while resizing.
-    let mut new_x = old_pos.x + old_size.width as i32 - target_w as i32;
-    let mut new_y = old_pos.y + old_size.height as i32 - target_h as i32;
-
-    if new_x < 0 {
-        new_x = 0;
-    }
-    if new_y < 0 {
-        new_y = 0;
-    }
+    // Position at fixed bottom-right corner (logical points)
+    let new_x: f64 = 1300.0;
+    let new_y: f64 = 680.0;
 
     float_win
-        .set_size(Size::Physical(PhysicalSize::new(target_w, target_h)))
+        .set_size(Size::Logical(LogicalSize::new(target_w as f64, target_h as f64)))
         .map_err(|e| e.to_string())?;
     float_win
-        .set_position(Position::Physical(PhysicalPosition::new(new_x, new_y)))
+        .set_position(Position::Logical(LogicalPosition::new(new_x, new_y)))
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -81,23 +74,9 @@ pub async fn set_float_mode(app: AppHandle, mode: String) -> Result<(), String> 
 
 #[tauri::command]
 pub async fn trigger_test_reminder(app: AppHandle) -> Result<(), String> {
-    if let Some(float_win) = app.get_webview_window("float-ball") {
-        // Switch to hint mode with bottom-right anchor preserved.
-        if let (Ok(old_pos), Ok(old_size)) = (float_win.outer_position(), float_win.outer_size()) {
-            let target_w: u32 = 320;
-            let target_h: u32 = 180;
-            let mut new_x = old_pos.x + old_size.width as i32 - target_w as i32;
-            let mut new_y = old_pos.y + old_size.height as i32 - target_h as i32;
-            if new_x < 0 {
-                new_x = 0;
-            }
-            if new_y < 0 {
-                new_y = 0;
-            }
-            let _ = float_win.set_size(Size::Physical(PhysicalSize::new(target_w, target_h)));
-            let _ = float_win.set_position(Position::Physical(PhysicalPosition::new(new_x, new_y)));
-        }
-        float_win.show().map_err(|e| e.to_string())?;
+    if let Some(_float_win) = app.get_webview_window("float-ball") {
+        // Just trigger the reminder event; do not resize the float window —
+        // the new design lets the cat greets inside the fixed-size window.
     }
 
     if let Some(main_win) = app.get_webview_window("main") {

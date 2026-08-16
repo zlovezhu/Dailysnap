@@ -14,7 +14,7 @@ interface SettingsStore {
 
 export const useSettingsStore = create<SettingsStore>((set) => ({
   reminderStartTime: "09:30",
-  reportGenerateTime: "18:00",
+  reportGenerateTime: "04:00",
   reminderIntervalMinutes: 120,
   holidayDisable: true,
   apiKey: "",

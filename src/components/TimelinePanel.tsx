@@ -5,14 +5,12 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { getRecordsByDate, type RecordRow } from "../services/db";
 import { CATEGORY_COLORS, categoryLabel } from "../services/ai";
+import { getTodayKey } from "../services/date";
 
 export function TimelinePanel() {
   const [records, setRecords] = useState<RecordRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedDate, setSelectedDate] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  });
+  const [selectedDate, setSelectedDate] = useState(() => getTodayKey());
 
   useEffect(() => { loadRecords(selectedDate); }, [selectedDate]);
 
@@ -30,10 +28,12 @@ export function TimelinePanel() {
 
   const formatDateDisplay = (dateStr: string) => {
     const date = new Date(dateStr + "T00:00:00");
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-    if (date.getTime() === today.getTime()) return "今天";
-    if (date.getTime() === yesterday.getTime()) return "昨天";
+    const todayStr = getTodayKey();  // 凌晨4点边界
+    if (dateStr === todayStr) return "今天";
+    const todayDate = new Date(todayStr + "T00:00:00");
+    const yesterday = new Date(todayDate); yesterday.setDate(todayDate.getDate() - 1);
+    const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, "0")}-${String(yesterday.getDate()).padStart(2, "0")}`;
+    if (dateStr === yesterdayStr) return "昨天";
     return date.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
   };
 
@@ -43,10 +43,7 @@ export function TimelinePanel() {
     setSelectedDate(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`);
   };
 
-  const isToday = selectedDate === (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  })();
+  const isToday = selectedDate === getTodayKey();
 
   const handleExport = async () => {
     if (records.length === 0) return;

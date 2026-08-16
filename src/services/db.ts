@@ -63,11 +63,11 @@ async function initializeDatabase() {
   const defaults = [
     ["reminder_start_time", "09:30"],
     ["reminder_interval_minutes", "120"],
-    ["report_generate_time", "18:00"],
+    ["report_generate_time", "04:00"],
     ["holiday_disable", "true"],
     ["api_key", ""],
-    ["api_base_url", "https://api.openai.com/v1"],
-    ["model_name", "gpt-4o-mini"],
+    ["api_base_url", "https://api.deepseek.com"],
+    ["model_name", "deepseek-v4-flash"],
   ];
 
   for (const [key, value] of defaults) {
@@ -98,10 +98,21 @@ export async function saveRecord(
   userFollowupReply?: string | null,
   category?: string
 ): Promise<void> {
+  // 拒绝保存 placeholder 内容：太短、含「待确认」等。
+  // AI 不应该把快捷回复原文当 record content；prompt 已强化，这里是安全网。
+  const trimmed = content.trim();
+  if (trimmed.length < 5) {
+    throw new Error(`Refusing placeholder record (too short): "${content}"`);
+  }
+  if (/待确认|具体内容|不知道|TBD|tbd|占位/i.test(trimmed)) {
+    throw new Error(`Refusing placeholder record: "${content}"`);
+  }
   const database = await getDb();
+  // date 用 date('now','localtime','-4 hours')（凌晨4点边界），
+  // 显式写在 INSERT 里而非依赖列 DEFAULT——这样对已存在的旧表也生效。
   await database.execute(
-    `INSERT INTO records (content, ai_question, ai_followup, user_followup_reply, category)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO records (content, ai_question, ai_followup, user_followup_reply, category, date)
+     VALUES ($1, $2, $3, $4, $5, date('now', 'localtime', '-4 hours'))`,
     [content, aiQuestion || null, aiFollowup || null, userFollowupReply || null, category || "other"]
   );
 }
@@ -113,6 +124,35 @@ export async function getRecordsByDate(date: string): Promise<RecordRow[]> {
     [date]
   );
   return rows;
+}
+
+/** 获取最近一条记录（跨日期），用于上下文感知问候语。 */
+export async function getLatestRecord(): Promise<RecordRow | null> {
+  const database = await getDb();
+  const rows = await database.select<RecordRow[]>(
+    "SELECT * FROM records ORDER BY created_at DESC, id DESC LIMIT 1"
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+/**
+ * Dedupe today's records by `date + content`.
+ * Keep the earliest one (smallest id), delete the rest.
+ * Used to clean up duplicates caused by the previous double-emit bug
+ * (Rust was emitting save-record to both main and float-ball).
+ */
+export async function dedupeTodayRecords(date: string): Promise<number> {
+  const database = await getDb();
+  // SQLite supports DELETE with subquery. Keep MIN(id) per (date, content).
+  const result = await database.execute(
+    `DELETE FROM records
+     WHERE date = $1
+       AND id NOT IN (
+         SELECT MIN(id) FROM records WHERE date = $1 GROUP BY date, content
+       )`,
+    [date]
+  );
+  return (result as { rowsAffected?: number }).rowsAffected ?? 0;
 }
 
 export async function getRecordsByDateRange(startDate: string, endDate: string): Promise<RecordRow[]> {

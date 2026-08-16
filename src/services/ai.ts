@@ -1,6 +1,37 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getAllSettings } from "./db";
 
+/** Frontend fetch wrapper with retry for transient errors (network / 5xx).
+ *  Retries up to 2 times with 1s, 2s backoff. 4xx errors are NOT retried. */
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2): Promise<Response> {
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    try {
+      const resp = await fetch(url, options);
+      if (resp.ok || resp.status < 500) return resp;
+      if (attempt <= maxRetries) {
+        await new Promise<void>((r) => setTimeout(r, 1000 * attempt));
+        continue;
+      }
+      return resp;
+    } catch (e) {
+      lastErr = e as Error;
+      if (attempt <= maxRetries) {
+        await new Promise<void>((r) => setTimeout(r, 1000 * attempt));
+        continue;
+      }
+      throw lastErr;
+    }
+  }
+  throw lastErr || new Error("fetch failed");
+}
+
+/** Detect whether a generated report is the fallback (AI call failed).
+ *  Used by callers to decide whether to persist to DB. */
+export function isFallbackReport(content: string): boolean {
+  return content.includes("AI 调用失败，重试中");
+}
+
 interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -74,11 +105,11 @@ async function callAiDirect(userMessage: string, step: string): Promise<string> 
   }
 }
 
-export async function generateReport(records: Array<{ content: string; created_at: string; user_followup_reply?: string | null; category?: string }>): Promise<string> {
+export async function generateReport(records: Array<{ content: string; created_at: string; user_followup_reply?: string | null; category?: string }>, date?: string): Promise<string> {
   const settings = await getAllSettings();
 
   if (!settings.api_key) {
-    return mockReport(records);
+    return mockReport(records, date);
   }
 
   const recordsText = records
@@ -100,13 +131,15 @@ export async function generateReport(records: Array<{ content: string; created_a
 4. 输出格式：Markdown，包含日期标题、分点列表、明日计划
 5. 语言风格：简洁专业，适合发给领导/团队
 6. 不要编造用户没做过的事情
+7. 如果多条记录本质是同一件事（用户点快捷回复导致重复），合并成一条
+8. 如果记录内容太短或像占位符（「在写代码」「换新的了」等），输出时合并为「具体内容待补充」一节，不要堆叠多条相同 placeholder
 
 用户今日记录：
 ${recordsText}`;
 
   try {
     const baseUrl = settings.api_base_url.replace(/\/+$/, "");
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await fetchWithRetry(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -125,9 +158,9 @@ ${recordsText}`;
 
     if (!response.ok) throw new Error(`API error: ${response.status}`);
     const data: ChatResponse = await response.json();
-    return data.choices[0]?.message?.content || mockReport(records);
+    return data.choices[0]?.message?.content || mockReport(records, date);
   } catch {
-    return mockReport(records);
+    return mockReport(records, date);
   }
 }
 
@@ -288,13 +321,20 @@ function mockResponse(userMessage: string, step: string): string {
   return "好的，已记录！有新进展随时找我聊~";
 }
 
-function mockReport(records: Array<{ content: string; created_at: string }>): string {
-  const today = new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" });
-  const items = records.map((r) => `- ${r.content}`).join("\n");
-  return `## ${today} 工作日报\n\n### 主要工作\n\n${items}\n\n---\n_由 DailySnap 自动生成（未配置 AI，使用原始记录）_`;
+/** 把 YYYY-MM-DD 字符串转成中文显示，如 "2026年8月15日" */
+function formatDateToChinese(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-");
+  return `${y}年${parseInt(m)}月${parseInt(d)}日`;
 }
 
-function mockWeeklyReport(records: Array<{ content: string; date: string }>): string {
+function mockReport(records: Array<{ content: string; created_at: string }>, date?: string): string {
+  // 用传入的 date（records 对应的日期），不是「当前日期」
+  const dateStr = date ? formatDateToChinese(date) : new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" });
+  const items = records.map((r) => `- ${r.content}`).join("\n");
+  return `## ${dateStr} 工作日报\n\n### 主要工作\n\n${items}\n\n---\n_由 DailySnap 自动生成（AI 调用失败，重试中）_`;
+}
+
+function mockWeeklyReport(records: Array<{ content: string; date: string; created_at: string }>): string {
   const grouped = groupRecordsByDate(records);
   const summary = Object.entries(grouped).map(([date, items]) => `- ${date}：${items.length} 条记录`).join("\n");
   return `## 本周工作周报\n\n### 本周工作总结\n\n${summary}\n\n### 时间分布分析\n\n本周共记录 ${records.length} 条\n\n### 下周计划\n\n- 继续推进当前工作\n\n---\n_由 DailySnap 自动生成（未配置 AI，使用原始记录）_`;

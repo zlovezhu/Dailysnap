@@ -3,15 +3,17 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { motion, AnimatePresence } from "framer-motion";
-import { Moon, Sun, X, Settings, Bell, Sparkles, Eye, EyeOff } from "lucide-react";
+import { Moon, Sun, X, Settings, Bell, Sparkles, Eye, EyeOff, Pencil } from "lucide-react";
 import { ChatPanel } from "./ChatPanel";
 import { TimelinePanel } from "./TimelinePanel";
 import { ReportPanel } from "./ReportPanel";
 import { WeeklyPanel } from "./WeeklyPanel";
 import { StatsPanel } from "./StatsPanel";
-import { Cat, type CatMood } from "./Cat";
+import { OnboardingScreen } from "./OnboardingScreen";
 import { useTheme } from "../hooks/useTheme";
-import { updateSetting as dbUpdateSetting, getAllSettings as dbGetAllSettings } from "../services/db";
+import { updateSetting as dbUpdateSetting, getAllSettings as dbGetAllSettings, getDailyReport, getRecordsByDate } from "../services/db";
+import { backfillMissingReports } from "../services/reportBackfill";
+import { offsetDayKey } from "../services/date";
 
 type Tab = "chat" | "timeline" | "report" | "weekly" | "stats";
 type ReportSubTab = "daily" | "weekly";
@@ -24,7 +26,7 @@ const REPORT_SUB_KEYS: ReportSubTab[] = ["daily", "weekly"];
 interface SettingsMenuProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (action: "reminder" | "ai" | "theme") => void;
+  onSelect: (action: "reminder" | "ai" | "theme" | "profile") => void;
 }
 
 function SettingsMenu({ open, onClose, onSelect }: SettingsMenuProps) {
@@ -46,6 +48,7 @@ function SettingsMenu({ open, onClose, onSelect }: SettingsMenuProps) {
         <MenuItem icon={<Bell size={13} />} label="提醒设置" onClick={() => { onClose(); onSelect("reminder"); }} />
         <MenuItem icon={<Sparkles size={13} />} label="AI 设置" onClick={() => { onClose(); onSelect("ai"); }} />
         <div className="h-px" style={{ background: "var(--border)" }} />
+        <MenuItem icon={<Pencil size={13} />} label="修改我的偏好" onClick={() => { onClose(); onSelect("profile"); }} />
         <MenuItem icon={<Moon size={13} />} label="主题切换" onClick={() => { onClose(); onSelect("theme"); }} />
       </motion.div>
     </>
@@ -126,7 +129,7 @@ function SettingsModal({ type, onClose }: { type: "reminder" | "ai" | null; onCl
 function ReminderSettings({ onClose }: { onClose: () => void }) {
   const [startTime, setStartTime] = useState("09:30");
   const [interval, setInterval] = useState("120");
-  const [reportTime, setReportTime] = useState("18:00");
+  const [reportTime, setReportTime] = useState("04:00");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -209,15 +212,29 @@ function ReminderSettings({ onClose }: { onClose: () => void }) {
 
 function AISettings({ onClose }: { onClose: () => void }) {
   const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("https://api.deepseek.com");
+  const [model, setModel] = useState("deepseek-v4-flash");
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     dbGetAllSettings()
-      .then((data) => { if (data.api_key) setApiKey(data.api_key); })
+      .then((data) => {
+        if (data.api_key) setApiKey(data.api_key);
+        if (data.api_base_url) setBaseUrl(data.api_base_url);
+        if (data.model_name) setModel(data.model_name);
+      })
       .catch(() => {});
   }, []);
+
+  const PRESETS: Array<{ label: string; url: string; model: string }> = [
+    { label: "DeepSeek (推荐)", url: "https://api.deepseek.com", model: "deepseek-v4-flash" },
+    { label: "OpenAI (国外)", url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+    { label: "月之暗面 Kimi", url: "https://api.moonshot.cn/v1", model: "kimi-k3" },
+    { label: "智谱 GLM-4", url: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
+    { label: "通义千问", url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-turbo" },
+  ];
 
   const handleSave = async () => {
     if (saving) return;
@@ -226,11 +243,13 @@ function AISettings({ onClose }: { onClose: () => void }) {
     try {
       // Write to DB (primary source of truth)
       await dbUpdateSetting("api_key", apiKey);
-      // Also notify backend AI client (so agent_turn can use the key)
+      await dbUpdateSetting("api_base_url", baseUrl);
+      await dbUpdateSetting("model_name", model);
+      // Also notify backend AI client (so agent_turn can use the new config)
       await invoke("sync_ai_config", {
         apiKey,
-        baseUrl: "https://api.openai.com/v1",
-        model: "gpt-4o-mini",
+        baseUrl,
+        model,
       }).catch((err) => console.error("sync_ai_config failed:", err));
       setSaved(true);
       setTimeout(() => { setSaved(false); onClose(); }, 800);
@@ -271,8 +290,62 @@ function AISettings({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </Field>
+
+      <Field label="API 接入点">
+        <input
+          type="text"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder="https://api.openai.com/v1"
+          className="w-full px-3 text-sm rounded-md outline-none font-mono"
+          style={{
+            background: "var(--bg)", color: "var(--text)",
+            border: "1px solid var(--border)",
+            paddingTop: "12px", paddingBottom: "12px",
+            height: "42px", fontSize: "13px",
+          }}
+        />
+      </Field>
+
+      <Field label="模型">
+        <input
+          type="text"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder="gpt-4o-mini"
+          className="w-full px-3 text-sm rounded-md outline-none font-mono"
+          style={{
+            background: "var(--bg)", color: "var(--text)",
+            border: "1px solid var(--border)",
+            paddingTop: "12px", paddingBottom: "12px",
+            height: "42px", fontSize: "13px",
+          }}
+        />
+      </Field>
+
+      {PRESETS.map((p) => (
+        <button
+          key={p.url}
+          onClick={() => { setBaseUrl(p.url); setModel(p.model); }}
+          className="text-xs rounded-md transition-all"
+          style={{
+            padding: "8px 10px",
+            textAlign: "left",
+            background: baseUrl === p.url ? "var(--accent-soft)" : "transparent",
+            border: "1px solid var(--border)",
+            color: "var(--text)",
+            cursor: "pointer",
+          }}
+        >
+          <span style={{ fontWeight: 500 }}>{p.label}</span>
+          <span style={{ color: "var(--text-tertiary)", marginLeft: "8px", fontSize: "10px" }}>
+            {p.url} · {p.model}
+          </span>
+        </button>
+      ))}
+
       <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "-6px", lineHeight: 1.5 }}>
-        留空时使用本地规则生成；配置后可启用 AI 追问和日报生成。推荐用 gpt-4o-mini 或国产模型。
+        留空时使用本地规则生成。点击下方预设可直接填入国内常用 API（DeepSeek、Kimi、智谱、通义）。
       </p>
       <button
         onClick={handleSave}
@@ -308,7 +381,57 @@ export function MainWindow() {
   const [showLightReminder, setShowLightReminder] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModal, setSettingsModal] = useState<"reminder" | "ai" | null>(null);
-  const [catMood, setCatMood] = useState<CatMood>("curious");
+  // 首次使用 onboarding：null=加载中，false=需引导，true=已完成
+  const [onboarded, setOnboarded] = useState<boolean | null>(null);
+  // 在已 onboarded 状态下，从设置里「修改我的偏好」进入 onboarding 时为 true
+  const [editProfile, setEditProfile] = useState(false);
+  // 编辑模式下的初始数据（按需拉取）
+  const [profileInitial, setProfileInitial] = useState<import("./OnboardingScreen").OnboardingInitialData | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  // 把后端 UserProfile 转成 OnboardingScreen 需要的初始数据
+  const convertProfile = (p: Record<string, unknown>) => {
+    const segs = (p.workday_segments as string | undefined) || "";
+    const blocks: Array<{ start: number; end: number }> = [];
+    for (const seg of segs.split(",").filter(Boolean)) {
+      const [s, e] = seg.split("-").map((s) => s.trim());
+      const [sh, sm] = (s || "").split(":").map(Number);
+      const [eh, em] = (e || "").split(":").map(Number);
+      if (!Number.isNaN(sh) && !Number.isNaN(eh)) {
+        blocks.push({ start: sh * 60 + (sm || 0), end: eh * 60 + (em || 0) });
+      }
+    }
+    return {
+      catName: (p.cat_name as string) || "",
+      occupation: (p.occupation as string) || "",
+      interruptStyle: ((p.interrupt_style as string) === "quiet" ? "quiet" : "popup") as "popup" | "quiet",
+      reminderIntervalMinutes: Number(p.reminder_interval_minutes) || 60,
+      catPersonality: ((p.cat_personality as string) || "warm") as "warm" | "cheeky" | "quiet",
+      workdayStart: (p.workday_start as string) || "09:00",
+      workdayEnd: (p.workday_end as string) || "18:00",
+      workdays: String(p.workdays || "1,2,3,4,5").split(",").map(Number).filter(Boolean),
+      workdaySegments: blocks,
+    };
+  };
+
+  const openProfileEditor = async () => {
+    setProfileLoading(true);
+    try {
+      const p = await invoke<Record<string, unknown>>("get_profile");
+      setProfileInitial(convertProfile(p));
+      setEditProfile(true);
+    } catch (e) {
+      console.error("[MainWindow] get_profile failed", e);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+  // macOS WKWebView 透明窗口在 hide/show 后经常出现"内容区空白但
+  // #root 背景正常"的问题。这是 AnimatePresence 的 exit 动画卡在
+  // 中间状态导致的——窗口被 hide 时 motion.div 触发 exit (opacity:0)，
+  // show 回来时 exit 没机会完成，新的 content 因为 exit 残留不显示。
+  // 用 renderKey 在 window focus 时强制重挂 tab 内容。
+  const [renderKey, setRenderKey] = useState(0);
   const lightTimerRef = useRef<number | null>(null);
   const { theme, toggleTheme } = useTheme();
 
@@ -328,24 +451,62 @@ export function MainWindow() {
     lightTimerRef.current = window.setTimeout(() => setShowLightReminder(false), LIGHT_TIP_MS);
   };
 
+  // ── 修复「窗口失焦回来后内容区空白」——
+  // macOS WKWebView 在 hide/show 时会暂停 AnimatePresence 的 exit 动画，
+  // 导致 motion.div 残留 exit 中间态（opacity:0），新内容不显示。
+  // 监听 window focus 事件（不只是 visibilitychange，更可靠），
+  // 用 setRenderKey 强制 remount tab 内容。
+  useEffect(() => {
+    const onFocus = () => setRenderKey((k) => k + 1);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
+  // 检查是否已完成 onboarding
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const done = await invoke<boolean>("is_onboarded");
+        if (!cancelled) setOnboarded(done);
+      } catch {
+        // 后端异常时默认当作已完成，避免卡在 onboarding
+        if (!cancelled) setOnboarded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 启动时静默补生成漏掉的日报（凌晨关机 / 几天没开程序也能补上）
+  // 同时早上 6:00-12:00 之间：检测昨天有 records 没日报 → 弹 toast 提示
+  const [reportReminder, setReportReminder] = useState<string | null>(null);
+  useEffect(() => {
+    void (async () => {
+      const n = await backfillMissingReports(7);
+      if (n > 0) console.log(`[MainWindow] 启动补生成 ${n} 天日报`);
+
+      const hour = new Date().getHours();
+      if (hour >= 6 && hour < 12) {
+        const yesterday = offsetDayKey(1);
+        try {
+          const existing = await getDailyReport(yesterday);
+          if (existing) return;
+          const records = await getRecordsByDate(yesterday);
+          if (records.length > 0) {
+            setReportReminder(`昨天有 ${records.length} 条记录但还没生成日报，要现在补吗？`);
+          }
+        } catch (err) {
+          console.error("[MainWindow] report reminder check failed:", err);
+        }
+      }
+    })();
+  }, []);
+
   const handleClickLightReminder = async () => {
     setShowLightReminder(false);
     setActiveTab("chat");
     await emit("focus-chat-input").catch(() => {});
   };
-
-  // Sync cat mood with backend state
-  useEffect(() => {
-    const fetchState = async () => {
-      try {
-        const s = await invoke<{ state_label: string }>("get_cat_state");
-        setCatMood(s.state_label as CatMood);
-      } catch { /* ignore */ }
-    };
-    fetchState();
-    const interval = setInterval(fetchState, 30000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Sync tab with URL hash
   useEffect(() => {
@@ -389,22 +550,33 @@ export function MainWindow() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Setup scheduler sync + listeners
+  // Setup scheduler sync + listeners + AI config sync
   useEffect(() => {
     const syncSchedulerSettings = async () => {
       try {
-        const data = await invoke<Record<string, string>>("get_all_settings");
+        const data = await dbGetAllSettings();
         const pairs: Array<[string, string]> = [
           ["reminder_start_time", data.reminder_start_time || "09:30"],
           ["reminder_interval_minutes", data.reminder_interval_minutes || "120"],
-          ["report_generate_time", data.report_generate_time || "18:00"],
+          ["report_generate_time", data.report_generate_time || "04:00"],
           ["holiday_disable", data.holiday_disable || "true"],
           ["api_key", data.api_key || ""],
-          ["api_base_url", data.api_base_url || "https://api.openai.com/v1"],
-          ["model_name", data.model_name || "gpt-4o-mini"],
+          ["api_base_url", data.api_base_url || "https://api.deepseek.com"],
+          ["model_name", data.model_name || "deepseek-v4-flash"],
         ];
         for (const [key, value] of pairs) {
           await invoke("update_setting", { key, value });
+        }
+        // CRITICAL: also push the API key into the Rust AiClient state.
+        // Without this, the back-end AiClient starts with an empty key
+        // on every app launch and falls back to the mock reply, even
+        // though the DB already has the key saved.
+        if (data.api_key) {
+          await invoke("sync_ai_config", {
+            apiKey: data.api_key,
+            baseUrl: data.api_base_url || "https://api.deepseek.com",
+            model: data.model_name || "deepseek-v4-flash",
+          }).catch((err) => console.error("sync_ai_config failed:", err));
         }
       } catch (error) { console.error(error); }
     };
@@ -438,6 +610,15 @@ export function MainWindow() {
     { key: "stats", label: "统计" },
   ];
 
+  // 首次使用 onboarding
+  if (onboarded === null) {
+    // 加载中
+    return <div style={{ width: "100%", height: "100%", background: "var(--bg)" }} />;
+  }
+  if (onboarded === false) {
+    return <OnboardingScreen onDone={() => setOnboarded(true)} />;
+  }
+
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: "var(--bg)" }}>
       {/* Title bar */}
@@ -448,7 +629,6 @@ export function MainWindow() {
         style={{ padding: "8px 12px 4px 12px" }}
       >
         <div className="flex items-center" style={{ gap: "8px" }}>
-          <Cat mood={catMood} size={28} variant="head" hasNotification={false} />
           <span
             data-tauri-drag-region
             className="label-caps"
@@ -509,6 +689,9 @@ export function MainWindow() {
           onSelect={(action) => {
             if (action === "theme") {
               toggleTheme();
+            } else if (action === "profile") {
+              // 从设置进入「修改我的偏好」：拉取 profile 后弹出 onboarding
+              void openProfileEditor();
             } else {
               setSettingsModal(action);
             }
@@ -540,6 +723,28 @@ export function MainWindow() {
             }}
           >
             猫喊你啦~ 现在在忙什么？（点击跳转记录）
+          </motion.button>
+        )}
+        {reportReminder && (
+          <motion.button
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            onClick={() => { setActiveTab("report"); setReportReminder(null); }}
+            className="text-left"
+            style={{
+              border: "none",
+              borderTop: "1px solid var(--accent-soft)",
+              borderBottom: "1px solid var(--accent-soft)",
+              background: "var(--accent-soft)",
+              color: "var(--accent-text)",
+              fontSize: "var(--text-sm)",
+              padding: "8px 16px",
+              cursor: "pointer",
+              overflow: "hidden",
+            }}
+          >
+            {reportReminder}（点此生成）
           </motion.button>
         )}
       </AnimatePresence>
@@ -643,7 +848,7 @@ export function MainWindow() {
       <div className="flex-1 relative" style={{ overflow: "hidden" }}>
         <AnimatePresence mode="wait">
           <motion.div
-            key={activeTab + "-" + (activeTab === "report" ? reportSub : "")}
+            key={activeTab + "-" + (activeTab === "report" ? reportSub : "") + "-rk" + renderKey}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
@@ -658,6 +863,58 @@ export function MainWindow() {
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {/* Edit profile overlay：从设置里「修改我的偏好」时全屏覆盖 onboarding */}
+      <AnimatePresence>
+        {editProfile && profileInitial && (
+          <motion.div
+            key="onboarding-edit"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 60,
+              background: "var(--bg)",
+            }}
+          >
+            <OnboardingScreen
+              mode="edit"
+              initialData={profileInitial}
+              onDone={() => {
+                setEditProfile(false);
+                setProfileInitial(null);
+              }}
+              onCancel={() => {
+                setEditProfile(false);
+                setProfileInitial(null);
+              }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Profile loading hint（拉数据期间的提示） */}
+      {profileLoading && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 70,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(0,0,0,0.25)",
+            color: "var(--text)",
+            fontSize: 13,
+            pointerEvents: "none",
+          }}
+        >
+          加载偏好中…
+        </div>
+      )}
     </div>
   );
 }

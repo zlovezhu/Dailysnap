@@ -1,0 +1,12 @@
+@import "./globals.css";
+
+/* === Float-ball-specific overrides ===
+   The main window's #root has a warm cream background and 14px border-radius.
+   The float-ball window must be fully transparent so only the cat PNG is
+   visible on the desktop — no backdrop, no rounded rectangle. */
+
+#root {
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}

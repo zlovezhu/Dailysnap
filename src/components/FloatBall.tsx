@@ -1,451 +1,533 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { motion, AnimatePresence } from "framer-motion";
-import { Cat, type CatMood } from "./Cat";
+import { listen, emit } from "@tauri-apps/api/event";
+import { Cat, type CatMood, type CatHandle } from "./Cat";
+import type { CuriousType } from "../hooks/useCatAnim";
+import { getAllSettings as dbGetAllSettings, getLatestRecord } from "../services/db";
+import { generateGreeting } from "../services/greeting";
 
-type FloatMode = "compact" | "hover" | "input" | "talking";
-
-interface RecordRow {
-  content: string;
-  user_followup_reply?: string | null;
-  created_at?: string;
-}
+interface Message { role: "user" | "ai"; content: string; followup?: boolean; followupOptions?: string[]; streaming?: boolean; }
 
 interface AgentAction {
-  action_type: string;
-  message: string;
+  action_type: string; message: string;
   tool_calls: Array<{ name: string; arguments: Record<string, unknown> }>;
+  needs_followup: boolean; followup_question: string;
+  followup_options: string[]; followup_round: number;
 }
 
-const STORAGE_KEY = "dailysnap_float_dialogues_v1";
-const HOVER_DELAY_MS = 600;          // hover → input 切换时间
-const TALKING_DURATION_MS = 2400;    // talking → compact 自动收起时间
-const NO_INPUT_AUTOCOLLAPSE_MS = 60000; // input 没输入/没focus 60s 自动收起
+// 兜底快捷回复（上下文问候语为空时用）
+const FALLBACK_QUICK_REPLIES = ["在写文档", "开会中", "刚做完一件事"];
 
-function getTodayKey() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
-function loadDialogues(): { content: string; createdAt: string }[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as { date: string; items: { content: string; createdAt: string }[] };
-    if (!parsed || parsed.date !== getTodayKey() || !Array.isArray(parsed.items)) return [];
-    return parsed.items;
-  } catch { return []; }
-}
-
-function saveDialogues(items: { content: string; createdAt: string }[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ date: getTodayKey(), items }));
-}
-
-function mergeDialogues(base: { content: string; createdAt: string }[], incoming: { content: string; createdAt: string }[]) {
-  const map = new Map<string, { content: string; createdAt: string }>();
-  [...base, ...incoming].forEach((item) => map.set(`${item.createdAt}|${item.content}`, item));
-  return [...map.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-}
-
-const HOVER_PROMPTS = [
-  "喵~ 现在在忙什么呀？",
-  "喵~ 跟我说说刚做完的事",
-  "猫喊你啦~ 记一条进展？",
-  "喵~ 想偷懒也告诉我一声",
-];
-
-function pickHoverPrompt() {
-  return HOVER_PROMPTS[Math.floor(Math.random() * HOVER_PROMPTS.length)];
-}
-
-function getDynamicPromptByHour(hour: number): string {
-  if (hour >= 6 && hour < 11) return "喵~ 早上好，今天打算做什么呀？";
-  if (hour >= 11 && hour < 14) return "中午了，刚做完的事跟我说一句？";
-  if (hour >= 14 && hour < 18) return "下午好~ 现在的进展到哪一步了？";
-  if (hour >= 18 && hour < 23) return "晚上好~ 今天还剩什么要收尾的？";
-  return "夜深了，简单写一句吧，明早看到会谢谢你。";
-}
+// 对话完成后多久自动清空气泡（仅桌面猫，不影响主窗口）
+const CLEAR_DELAY_MS = 5000;
 
 export function FloatBall() {
-  const [mode, setMode] = useState<FloatMode>("compact");
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
-  const [prompt, setPrompt] = useState(HOVER_PROMPTS[0]);
-  const [reply, setReply] = useState("");
-  const [hasUnread, setHasUnread] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [followupOpts, setFollowupOpts] = useState<string[]>([]);
+  // Track whether we're in a followup (the last AI message is a followup).
+  // Used to show a "skip" button even when the LLM didn't return options.
+  const [isFollowupState, setIsFollowupState] = useState(false);
   const [catMood, setCatMood] = useState<CatMood>("calm");
-  const [recentRecordCount, setRecentRecordCount] = useState(0);
+  // 上下文感知问候语（确定性，与主窗口 ChatPanel 一致）
+  const [greeting, setGreeting] = useState<string>("");
+  const [quickReplies, setQuickReplies] = useState<string[]>(FALLBACK_QUICK_REPLIES);
+  const [hovered, setHovered] = useState(false);
 
-  const modeRef = useRef<FloatMode>("compact");
-  const inputFocusedRef = useRef(false);
+  const [isDark, setIsDark] = useState(() => {
+    const s = localStorage.getItem("dailysnap-theme");
+    if (s === "light" || s === "dark") return s === "dark";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+
+  const processingRef = useRef(false);
   const pointerRef = useRef({ isDown: false, hasDragged: false, startX: 0, startY: 0 });
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const hoverTimerRef = useRef<number | null>(null);
-  const collapseTimerRef = useRef<number | null>(null);
-  const talkingTimerRef = useRef<number | null>(null);
+  // Mirror of catMood so setTimeout callbacks can read the current value
+  // (state values captured in closures are stale).
+  const catMoodRef = useRef<CatMood>("calm");
 
-  const switchMode = (next: FloatMode) => {
-    modeRef.current = next;
-    setMode(next);
+  // ──── Sync cat mood to main window ────
+  // Every time we change catMood (or curiousType), emit a Tauri event
+  // so the main window's cat (in ChatPanel) stays in sync.
+  const catRef = useRef<CatHandle | null>(null);
+  const syncCatMood = (mood: CatMood, cType?: CuriousType) => {
+    setCatMood(mood);
+    catMoodRef.current = mood;
+    emit("cat-mood-change", {
+      mood,
+      curiousType: cType ?? curiousTypeRef.current,
+    }).catch(() => {});
   };
+  const inputRef = useRef<HTMLInputElement>(null);
+  const chatRef = useRef<HTMLDivElement>(null);
+  const followupRoundRef = useRef(0);
+  const curiousTypeRef = useRef<CuriousType>("A");
+  // 自动清空定时器
+  const clearTimerRef = useRef<number | null>(null);
+  // 清空锚点：清空后只显示 conversation 中此索引之后的新消息。
+  // -1 表示尚未清空（首次快照前）。
+  const clearedFromRef = useRef(-1);
+  // 最近一次 conversation-changed 快照的长度（用于清空时更新锚点）
+  const snapshotLenRef = useRef(0);
 
-  // Drag handling
+  // Theme sync
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "dailysnap-theme" && (e.newValue === "light" || e.newValue === "dark")) {
+        setIsDark(e.newValue === "dark");
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onMq = () => { if (!localStorage.getItem("dailysnap-theme")) setIsDark(mq.matches); };
+    mq.addEventListener("change", onMq);
+    return () => { window.removeEventListener("storage", onStorage); mq.removeEventListener("change", onMq); };
+  }, []);
+
+  const theme = isDark
+    ? { bg: "rgba(0,0,0,0.55)", border: "rgba(255,255,255,0.18)", text: "#fbf9f3",
+        placeholder: "rgba(251,249,243,0.55)", sendBg: "rgba(251,249,243,0.85)", sendColor: "#1f1d18" }
+    : { bg: "rgba(255,255,255,0.72)", border: "rgba(0,0,0,0.12)", text: "#1f1d18",
+        placeholder: "rgba(31,29,24,0.5)", sendBg: "#1f1d18", sendColor: "#fbf9f3" };
+
+  // Drag
   const beginPointer = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest("textarea") || target.closest("button")) return;
+    if ((e.target as HTMLElement).closest("input,button")) return;
     pointerRef.current = { isDown: true, hasDragged: false, startX: e.screenX, startY: e.screenY };
   };
-
   const handlePointerMove = async (e: React.MouseEvent) => {
     if (!pointerRef.current.isDown || pointerRef.current.hasDragged) return;
-    const dx = Math.abs(e.screenX - pointerRef.current.startX);
-    const dy = Math.abs(e.screenY - pointerRef.current.startY);
-    if (dx < 6 && dy < 6) return;
+    if (Math.abs(e.screenX - pointerRef.current.startX) < 6 && Math.abs(e.screenY - pointerRef.current.startY) < 6) return;
     pointerRef.current.hasDragged = true;
     await invoke("start_drag_window", { label: "float-ball" }).catch(() => {});
   };
-
   const endPointer = () => { pointerRef.current.isDown = false; };
-
   const openMain = async () => {
-    if (pointerRef.current.hasDragged) return;
-    await switchMode("compact");
+    if (pointerRef.current.hasDragged) { pointerRef.current.hasDragged = false; return; }
     await invoke("open_main_window").catch(() => {});
   };
 
-  const focusInput = () => {
-    requestAnimationFrame(() => inputRef.current?.focus());
-  };
+  const focusInput = () => { requestAnimationFrame(() => inputRef.current?.focus()); };
 
-  const enterInput = (initialPrompt?: string) => {
-    if (initialPrompt) setPrompt(initialPrompt);
-    if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
-    hoverTimerRef.current = null;
-    switchMode("input");
-    focusInput();
-    setHasUnread(false);
-    setCatMood("curious");
-    // Auto-collapse if no input/focus for 60s
-    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
-    collapseTimerRef.current = window.setTimeout(() => {
-      if (!inputFocusedRef.current && !input.trim()) {
-        switchMode("compact");
-        setInput("");
-        setPrompt(pickHoverPrompt());
-      }
-    }, NO_INPUT_AUTOCOLLAPSE_MS);
-  };
-
-  const enterHover = () => {
-    if (modeRef.current === "talking") return;
-    switchMode("hover");
-    setHasUnread(false);
-    setCatMood("curious");
-  };
-
-  const exitToCompact = () => {
-    if (modeRef.current === "talking") return;
-    if (inputFocusedRef.current || input.trim()) return;
-    if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
-    hoverTimerRef.current = null;
-    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
-    switchMode("compact");
-    setInput("");
-    setPrompt(pickHoverPrompt());
-  };
-
-  const onPointerEnter = () => {
-    if (pointerRef.current.hasDragged) return;
-    if (modeRef.current === "talking") return;
-    if (modeRef.current === "compact") {
-      enterHover();
-    }
-    if (modeRef.current === "hover") {
-      if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = window.setTimeout(() => {
-        if (modeRef.current === "hover") enterInput();
-      }, HOVER_DELAY_MS);
-    }
-  };
-
-  const onPointerLeave = () => {
-    if (modeRef.current === "talking") return;
-    if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
-    hoverTimerRef.current = null;
-    if (modeRef.current === "input" && inputFocusedRef.current) return;
-    exitToCompact();
-  };
-
-  const onCatClick = () => {
-    if (pointerRef.current.hasDragged) return;
-    if (modeRef.current === "compact") enterInput();
-    else if (modeRef.current === "hover") enterInput();
-    else if (modeRef.current === "input") {
-      if (!inputFocusedRef.current) focusInput();
-    }
-  };
-
-  const sendRecord = async () => {
-    const content = input.trim();
-    if (!content || sending) return;
-    setSending(true);
+  // 刷新上下文感知问候语 + 快捷回复（确定性，与主窗口 ChatPanel 一致）
+  const refreshGreeting = async () => {
     try {
-      const result = await invoke<AgentAction>("agent_turn", {
-        userMessage: content,
-        mode: null,
-      });
-      if (result.action_type === "save_record") {
-        setCatMood("happy");
-        setReply(result.message || "好的，记下来啦~");
-      } else {
-        setCatMood("satisfied");
-        setReply(result.message || "好的，知道啦");
-      }
-      setInput("");
-      switchMode("talking");
-      if (talkingTimerRef.current) window.clearTimeout(talkingTimerRef.current);
-      talkingTimerRef.current = window.setTimeout(() => {
-        switchMode("compact");
-        setReply("");
-        setPrompt(pickHoverPrompt());
-      }, TALKING_DURATION_MS);
+      const latest = await getLatestRecord();
+      const g = generateGreeting(latest);
+      setGreeting(g.text);
+      setQuickReplies(g.quickReplies);
     } catch {
-      setReply("呜呜，我脑子打结了...稍后再试？");
-      setCatMood("sad");
-      switchMode("talking");
-      if (talkingTimerRef.current) window.clearTimeout(talkingTimerRef.current);
-      talkingTimerRef.current = window.setTimeout(() => {
-        switchMode("compact");
-        setReply("");
-        setPrompt(pickHoverPrompt());
-      }, TALKING_DURATION_MS);
-    } finally {
-      setSending(false);
+      // DB 读失败时保留兜底
     }
   };
 
-  // Load today records + register reminder listener
+  // 清空桌面猫的气泡（仅显示层，不影响 Rust 端 conversation 和主窗口）。
+  // 核心：把清空锚点推进到「当前 conversation 长度」，之后快照只 slice 锚点之后的新消息。
+  const clearBubbles = () => {
+    clearedFromRef.current = snapshotLenRef.current;
+    setMessages([]);
+    setFollowupOpts([]);
+    setIsFollowupState(false);
+    followupRoundRef.current = 0;
+    void refreshGreeting();
+  };
+
+  // 对话完成后 N 秒自动清空（追问中不调用）
+  const scheduleClear = () => {
+    if (clearTimerRef.current) window.clearTimeout(clearTimerRef.current);
+    clearTimerRef.current = window.setTimeout(() => {
+      clearBubbles();
+      syncCatMood("calm");
+    }, CLEAR_DELAY_MS);
+  };
+
+  // 组件挂载时刷新一次问候语
+  useEffect(() => {
+    void refreshGreeting();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 发送：只 invoke，用户消息 + AI 回复都由 Rust 端 append 进 conversation 并广播快照
+  async function send(text: string, skipFollowup = false) {
+    const content = text.trim();
+    // Guard against rapid duplicate sends (Enter key spam, double-click).
+    if (processingRef.current) return;
+    if (!content && !skipFollowup) return;
+    processingRef.current = true;
+    setIsProcessing(true);
+    syncCatMood("curious");  // thinking pose while AI responds
+
+    // 用户主动发消息：取消 pending 的自动清空
+    if (clearTimerRef.current) window.clearTimeout(clearTimerRef.current);
+
+    setInput("");
+
+    invoke("agent_turn_stream", {
+      userMessage: skipFollowup ? "（用户选择跳过追问）" : content,
+      mode: null,
+      followupRound: skipFollowup ? 2 : followupRoundRef.current,
+    }).catch(err => {
+      console.error("agent_turn_stream failed:", err);
+      setIsProcessing(false);
+      processingRef.current = false;
+    });
+  }
+
+  // Init: sync config + listen to events
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
-      // Load today's record count
       try {
-        const today = getTodayKey();
-        const remote = await invoke<RecordRow[]>("get_records_by_date", { date: today });
-        if (!cancelled) setRecentRecordCount((remote || []).length);
-      } catch { /* ignore */ }
-
-      // On app start: cat greets the user automatically (no need to hover first).
-      // Delay 2.5s so the webview + image bundle have time to finish loading.
-      const greetingTimer = window.setTimeout(() => {
-        if (document.readyState !== "complete") return;
-        if (modeRef.current === "compact") {
-          enterHover();
+        const s = await dbGetAllSettings();
+        if (!cancelled && s.api_key) {
+          await invoke("sync_ai_config", {
+            apiKey: s.api_key,
+            baseUrl: s.api_base_url || "https://api.deepseek.com/v1",
+            model: s.model_name || "deepseek-v4-flash",
+          }).catch(() => {});
         }
-      }, 2500);
+      } catch {}
 
-      // Reminder trigger → directly enter input mode (cat says hello, no hover needed)
-      const unlisten = await listen("reminder-trigger", () => {
-        const dynamicPrompt = getDynamicPromptByHour(new Date().getHours());
-        if (modeRef.current === "input") {
-          setPrompt(dynamicPrompt);
-          return;
-        }
-        setHasUnread(true);
-        enterInput(dynamicPrompt);
+      const unlistenToken = await listen("agent-token", (e) => {
+        if (cancelled) return;
+        const t = (e.payload as { text: string }).text;
+        setMessages(prev => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (last && last.role === "ai" && last.streaming) {
+            copy[copy.length - 1] = { ...last, content: last.content + t };
+          } else {
+            copy.push({ role: "ai", content: t, streaming: true });
+          }
+          return copy;
+        });
       });
-      if (cancelled) {
-        window.clearTimeout(greetingTimer);
-        return () => unlisten();
-      }
-      return () => {
-        window.clearTimeout(greetingTimer);
-        unlisten();
-      };
-    };
 
-    const cleanupPromise = init();
-    return () => {
-      cancelled = true;
-      cleanupPromise.then((c) => c && c());
+      // 对话完整快照（单一事实来源，与主窗口 ChatPanel 同步）。
+      // 但桌面猫有「自动清空」：只显示清空锚点之后的新消息。
+      const unlistenChanged = await listen("conversation-changed", (e) => {
+        if (cancelled) return;
+        const full = e.payload as Message[];
+        snapshotLenRef.current = full.length;
+        if (clearedFromRef.current >= 0) {
+          setMessages(full.slice(clearedFromRef.current));
+        } else {
+          setMessages(full);
+        }
+      });
+
+      const unlistenResult = await listen("agent-turn-result", (e) => {
+        if (cancelled) return;
+        const r = e.payload as AgentAction;
+        setIsProcessing(false);
+        processingRef.current = false;
+
+        if (r.needs_followup && r.followup_round <= 2) {
+          // 追问：Type A = 灵光一闪（a-ha → outro → static）
+          followupRoundRef.current = r.followup_round;
+          setFollowupOpts(r.followup_options || []);
+          setIsFollowupState(true);
+          curiousTypeRef.current = "A";
+          catRef.current?.finishCurious("A");
+          // Type A (aHa+outro) 约 3s。等动画完成后再切回 calm。
+          setTimeout(() => {
+            if (catMoodRef.current === "curious") {
+              syncCatMood("calm");
+            }
+          }, 3000);
+        } else {
+          // 完成对话：Type B = return-normal（outro only）
+          followupRoundRef.current = 0;
+          setFollowupOpts([]);
+          setIsFollowupState(false);
+          curiousTypeRef.current = "B";
+          catRef.current?.finishCurious("B");
+          const finalMood = r.action_type === "save_record" ? "happy" : "satisfied";
+          setTimeout(() => {
+            if (catMoodRef.current === "curious") {
+              syncCatMood(finalMood);
+            }
+          }, 1800);
+          // 完成对话后 5 秒自动清空桌面猫气泡（追问分支不触发）
+          scheduleClear();
+        }
+      });
+
+      return () => { unlistenToken(); unlistenChanged(); unlistenResult(); };
     };
+    const p = init();
+    return () => { cancelled = true; p.then(fn => fn?.()); };
   }, []);
 
-  // Cleanup
-  useEffect(() => () => {
-    if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
-    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
-    if (talkingTimerRef.current) window.clearTimeout(talkingTimerRef.current);
+  // 启动：只显示「今天最新 1 轮」对话（最后一条 user 及之后的 AI 回复），
+  // 历史更早的轮次不显示。若最新一轮停在追问，恢复追问 chips。
+  useEffect(() => {
+    let disposed = false;
+    invoke<Message[]>("get_conversation")
+      .then((msgs) => {
+        if (disposed) return;
+        snapshotLenRef.current = msgs.length;
+        // 找最后一条 user 消息的索引，作为「最新 1 轮」的起点
+        let lastUserIdx = msgs.length;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === "user") {
+            lastUserIdx = i;
+            break;
+          }
+        }
+        clearedFromRef.current = lastUserIdx;
+        const latestRound = msgs.slice(lastUserIdx);
+        if (latestRound.length > 0) {
+          setMessages(latestRound);
+          // 最新一轮若停在追问，恢复追问 chips（让用户能继续回答）
+          const lastMsg = latestRound[latestRound.length - 1];
+          if (lastMsg.role === "ai" && lastMsg.followup) {
+            setFollowupOpts(lastMsg.followupOptions || []);
+            setIsFollowupState(true);
+            followupRoundRef.current = 1;
+          }
+        } else {
+          setMessages([]);
+          void refreshGreeting();
+        }
+      })
+      .catch(() => {});
+    return () => { disposed = true; };
   }, []);
 
-  const onInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendRecord();
+  // Auto-scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    if (chatRef.current) {
+      chatRef.current.scrollTop = chatRef.current.scrollHeight;
     }
-  };
+  }, [messages]);
 
-  // Show greeting bubble (compact + hover + input show prompt; talking shows reply)
-  const showText = mode === "talking" ? reply : prompt;
+  // Input visibility: only show on hover OR when conversation is active
+  const showInput = hovered || messages.length > 0 || isProcessing;
+  // Greeting visibility: only on hover, only when no messages yet
+  const showGreeting = hovered && messages.length === 0 && !isProcessing;
 
   return (
     <div
-      onMouseEnter={onPointerEnter}
-      onMouseLeave={onPointerLeave}
-      onMouseDown={beginPointer}
-      onMouseMove={handlePointerMove}
-      onMouseUp={endPointer}
-      onDoubleClick={openMain}
+      onMouseEnter={() => { setHovered(true); if (messages.length === 0) void refreshGreeting(); }}
+      onMouseLeave={() => setHovered(false)}
+      onMouseDown={beginPointer} onMouseMove={handlePointerMove} onMouseUp={endPointer}
+      onClick={(e) => {
+        // Don't open main window when user clicks inside interactive
+        // controls (input box, send button, quick reply chips, etc.).
+        const target = e.target as HTMLElement;
+        if (target.closest("input, textarea, button")) return;
+        openMain();
+      }}
       style={{
-        width: "240px", height: "240px",
-        position: "relative",
-        overflow: "visible",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
+        width: "100%", height: "100%", position: "relative",
+        overflow: "hidden", pointerEvents: "auto",
       }}
     >
-      {/* Cat — always visible. Two-layer centering: outer div does position+translate,
-          inner motion.div does y-only animation. If we put the y animation on the outer
-          div, framer-motion would append translateY() and break the centering. */}
-      <div
-        onClick={onCatClick}
-        onMouseDown={beginPointer}
-        style={{
-          position: "absolute",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          cursor: pointerRef.current.hasDragged ? "grabbing" : "pointer",
-          zIndex: 2,
-        }}
-      >
-        <motion.div
-          animate={{
-            y: mode === "compact" ? [0, -2, 0] : 0,
+      {/* CHAT — above cat, scrollable, anchored to bottom */}
+      {messages.length > 0 && (
+        <div
+          ref={chatRef}
+          style={{
+            position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)",
+            width: "100%", maxWidth: 260,
+            bottom: 170, /* 320-170=150px, cat top=65%*320-48=160px, 10px gap */
+            display: "flex", flexDirection: "column",
+            justifyContent: "flex-end", padding: "0 12px 6px", gap: 4,
+            overflowY: "auto", overflowX: "hidden", pointerEvents: "none",
+            scrollbarWidth: "none",
           }}
-          transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
         >
-          <Cat mood={catMood} size={160} variant="full" hasNotification={hasUnread} />
-        </motion.div>
+          {messages.map((m, i) => {
+            const isEmptyAi = m.role === "ai" && !m.content && isProcessing;
+            return (
+            <div
+              key={i}
+              style={{
+                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                maxWidth: "85%", padding: "5px 10px", borderRadius: 10,
+                fontSize: 12, lineHeight: 1.4, color: theme.text,
+                background: theme.bg, border: `1px solid ${theme.border}`,
+                ...(m.role === "user" ? { borderBottomRightRadius: 3 } : { borderBottomLeftRadius: 3 }),
+                backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+                flexShrink: 0,
+                minWidth: isEmptyAi ? 52 : 0,
+              }}
+            >
+              {isEmptyAi ? (
+                <span style={{ display: "inline-flex", gap: 3, alignItems: "center", padding: "2px 0" }}>
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: theme.text, opacity: 0.5, animation: "typingDot 1.2s ease-in-out infinite", animationDelay: "0s" }} />
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: theme.text, opacity: 0.5, animation: "typingDot 1.2s ease-in-out infinite", animationDelay: "0.2s" }} />
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: theme.text, opacity: 0.5, animation: "typingDot 1.2s ease-in-out infinite", animationDelay: "0.4s" }} />
+                </span>
+              ) : (m.content || "　")}
+            </div>
+            );})}
+        </div>
+      )}
+
+      {/* CAT — top: 65%, closer to input */}
+      <div style={{
+        position: "absolute", top: "65%", left: "50%",
+        transform: "translate(-50%, -50%)", zIndex: 2,
+      }}>
+        {/* Greeting — above cat, only on hover when no messages */}
+        {showGreeting && (
+          <div style={{
+            position: "absolute", bottom: "calc(100% + 4px)", left: "50%",
+            transform: "translateX(-50%)",
+            maxWidth: 220,
+            background: theme.bg, border: `1px solid ${theme.border}`,
+            borderRadius: 10, padding: "4px 10px", fontSize: 11, color: theme.text,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
+          }}>
+            {greeting}
+          </div>
+        )}
+        <Cat ref={catRef} mood={catMood} size={96} variant={"full"} hasNotification={false} curiousType={curiousTypeRef.current} />
       </div>
 
-      {/* Greeting bubble — visible in hover/input/talking states */}
-      <AnimatePresence>
-        {mode !== "compact" && (
-          <motion.div
-            key={`bubble-${mode}`}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.18 }}
-            style={{
-              position: "absolute",
-              bottom: "100%",
-              left: "50%",
-              transform: "translateX(-50%)",
-              marginBottom: "8px",
-              padding: "8px 14px",
-              background: "transparent",
-              border: "none",
-              borderRadius: "10px",
-              whiteSpace: "nowrap",
-              fontSize: "13px",
-              color: "#fbf9f3",
-              textShadow: "0 1px 4px rgba(0,0,0,0.6)",
-              pointerEvents: "none",
-              zIndex: 3,
-            }}
-          >
-            {showText}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Input — only in "input" mode */}
-      <AnimatePresence>
-        {mode === "input" && (
-          <motion.div
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.18 }}
-            style={{
-              position: "absolute",
-              bottom: "100%",
-              left: "50%",
-              transform: "translateX(-50%)",
-              marginBottom: "8px",
-              padding: "8px",
-              background: "rgba(0,0,0,0.25)",
-              backdropFilter: "blur(12px)",
-              WebkitBackdropFilter: "blur(12px)",
-              border: "1px solid rgba(251,249,243,0.3)",
-              borderRadius: "999px",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
-              zIndex: 4,
-              minWidth: "260px",
-            }}
-          >
-            <textarea
+      {/* INPUT — hidden by default, only on hover OR active conversation */}
+      {showInput && (
+        <div style={{
+          position: "absolute", bottom: 32, left: "50%", transform: "translateX(-50%)",
+          width: "100%", maxWidth: 240,
+          padding: "0 12px",
+        }}>
+          <div style={{
+            display: "flex", gap: 5, alignItems: "center",
+            background: theme.bg, border: `1px solid ${theme.border}`,
+            borderRadius: 999, padding: "3px 4px 3px 11px",
+            backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+          }}>
+            <input
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onFocus={() => {
-                inputFocusedRef.current = true;
-                if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
-              }}
-              onBlur={() => {
-                inputFocusedRef.current = false;
-                if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
-              }}
-              onKeyDown={onInputKeyDown}
-              placeholder="写一句话..."
-              rows={1}
+              onChange={e => setInput(e.target.value)}
+              onFocus={() => setHovered(true)}
+              onKeyDown={e => { if (e.key === "Enter" && !isProcessing) send(input); }}
+              placeholder={isProcessing ? "喵..." : "写一句话..."}
+              disabled={isProcessing}
               style={{
-                flex: 1,
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                resize: "none",
-                fontSize: "13px",
-                color: "#fbf9f3",
-                padding: "4px 8px",
-                lineHeight: "1.4",
-                width: "200px",
-                fontFamily: "inherit",
+                flex: 1, background: "none", border: "none", outline: "none",
+                fontSize: 12, color: theme.text, fontFamily: "inherit", padding: "2px 0",
+                minWidth: 0,
               }}
             />
             <button
-              onClick={sendRecord}
-              disabled={!input.trim() || sending}
+              onClick={(e) => { e.stopPropagation(); send(input); }}
+              disabled={!input.trim() || isProcessing}
               style={{
-                border: "none",
-                background: "rgba(251,249,243,0.85)",
-                color: "#1f1d18",
-                borderRadius: "50%",
-                width: "30px",
-                height: "30px",
-                cursor: !input.trim() || sending ? "wait" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "14px",
-                fontWeight: 600,
-                opacity: !input.trim() || sending ? 0.6 : 1,
-                flexShrink: 0,
+                width: 22, height: 22, border: "none",
+                background: !input.trim() || isProcessing ? theme.border : theme.sendBg,
+                borderRadius: "50%", cursor: !input.trim() || isProcessing ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0, opacity: isProcessing ? 0.5 : 1,
               }}
             >
-              ↑
+              {isProcessing
+                ? <Spinner color={theme.sendColor} />
+                : <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke={theme.sendColor} strokeWidth="2.5" strokeLinecap="round"><line x1="3" y1="8" x2="13" y2="8"/><polyline points="9,3 13,8 9,13"/></svg>
+              }
             </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+        </div>
+      )}
+
+      {/* QUICK REPLIES — empty state: 3 default prompts when input is visible */}
+      {showInput && followupOpts.length === 0 && messages.length === 0 && !isProcessing && (
+        <div style={{
+          position: "absolute", bottom: 6, left: "50%", transform: "translateX(-50%)",
+          width: "calc(100% - 20px)", maxWidth: 280,
+          padding: "0 4px", display: "flex", gap: 4,
+          flexWrap: "nowrap", justifyContent: "center",
+        }}>
+          {(quickReplies.length ? quickReplies : FALLBACK_QUICK_REPLIES).slice(0, 3).map(opt => (
+            <button key={opt}
+              onClick={(e) => { e.stopPropagation(); setInput(opt); inputRef.current?.focus(); }}
+              style={{
+                padding: "1px 5px", fontSize: 10,
+                background: theme.bg, border: `1px solid ${theme.border}`,
+                borderRadius: 999, color: theme.text, cursor: "pointer",
+                whiteSpace: "nowrap", flexShrink: 0,
+                backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
+              }}
+            >{truncateChip(opt)}</button>
+          ))}
+        </div>
+      )}
+
+      {/* QUICK REPLIES — followup.
+         把"跳过追问"按钮放在 chip 容器内最右边（flex-shrink: 0）。
+         这里 max 2 chip + 1 跳过按钮能稳定放下。LLM 返回 3+ 时只显示前 2 个。
+         加 hovered 依赖：鼠标移出后整个容器（含跳过按钮）一起消失。 */}
+      {(hovered || isProcessing) && (followupOpts.length > 0 || isFollowupState) && (
+        <div style={{
+          position: "absolute", bottom: 4, left: "50%", transform: "translateX(-50%)",
+          width: "calc(100% - 12px)", maxWidth: 280,
+          padding: "0 4px", display: "flex", gap: 3,
+          flexWrap: "nowrap", justifyContent: "center",
+          alignItems: "center",
+        }}>
+          {followupOpts.slice(0, 2).map(opt => (
+            <button key={opt}
+              onClick={(e) => { e.stopPropagation(); setInput(opt); inputRef.current?.focus(); }}
+              style={{
+                padding: "2px 7px", fontSize: 10,
+                background: theme.bg, border: `1px solid ${theme.border}`,
+                borderRadius: 999, color: theme.text, cursor: "pointer",
+                whiteSpace: "nowrap", flexShrink: 0,
+                backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
+              }}
+            >{truncateChip(opt, 6)}</button>
+          ))}
+          {/* 跳过追问按钮：始终在右侧，flex-shrink: 0 保证不被裁剪 */}
+          {isFollowupState && (
+            <button
+              onClick={(e) => { e.stopPropagation(); send("", true); }}
+              style={{
+                padding: "2px 7px", fontSize: 10,
+                background: "transparent", border: "none",
+                color: theme.placeholder, cursor: "pointer",
+                whiteSpace: "nowrap", flexShrink: 0,
+                textDecoration: "underline",
+              }}
+            >跳过</button>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+/** Truncate chip text to N chars + ellipsis. Click handler uses full text. */
+function truncateChip(text: string, max = 7): string {
+  return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
+function Spinner({ color }: { color: string }) {
+  return (
+    <div style={{
+      width: 12, height: 12, border: `2px solid rgba(0,0,0,0.2)`,
+      borderTopColor: color, borderRadius: "50%",
+      animation: "spin 0.6s linear infinite",
+    }} />
+  );
+}
+
+// Inject spinner keyframes
+if (typeof document !== "undefined") {
+  const style = document.createElement("style");
+  style.textContent = `
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes typingDot {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-4px); opacity: 1; }
+    }
+  `;
+  document.head.appendChild(style);
 }

@@ -6,7 +6,8 @@ import ReactMarkdown from "react-markdown";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { getRecordsByDate, saveDailyReport, getDailyReport, getDailyReports, type DailyReportRow } from "../services/db";
-import { generateReport } from "../services/ai";
+import { generateReport, isFallbackReport } from "../services/ai";
+import { getTodayKey } from "../services/date";
 
 export function ReportPanel() {
   const [report, setReport] = useState<string | null>(null);
@@ -14,10 +15,7 @@ export function ReportPanel() {
   const [copied, setCopied] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [historyReports, setHistoryReports] = useState<DailyReportRow[]>([]);
-  const today = (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  })();
+  const today = getTodayKey();
 
   useEffect(() => { loadExistingReport(); }, []);
 
@@ -40,12 +38,18 @@ export function ReportPanel() {
     setIsGenerating(true);
     try {
       const records = await getRecordsByDate(today);
-      const result = await generateReport(records);
+      if (records.length === 0) {
+        setReport(`## ${today} 工作日报\n\n### 主要工作\n\n（暂无记录）`);
+        return;
+      }
+      const result = await generateReport(records, today);
       setReport(result);
+      // AI 调用失败时返回的是 fallback 占位符，不写入 DB（避免污染历史）
+      if (isFallbackReport(result)) return;
       const recordIds = records.map((r) => r.id).filter((id): id is number => id != null);
       await saveDailyReport(today, result, recordIds);
     } catch {
-      setReport(`## ${today} 工作日报\n\n### 主要工作\n\n（暂无记录）\n\n---\n_生成失败_`);
+      setReport(`## ${today} 工作日报\n\n### 主要工作\n\n（生成失败，重试中）`);
     } finally { setIsGenerating(false); }
   };
 

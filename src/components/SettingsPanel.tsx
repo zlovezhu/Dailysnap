@@ -14,7 +14,7 @@ interface Settings {
 
 const DEFAULT_SETTINGS: Settings = {
   reminderStartTime: "09:30",
-  reportGenerateTime: "18:00",
+  reportGenerateTime: "04:00",
   reminderIntervalMinutes: 120,
   holidayDisable: true,
   apiKey: "",
@@ -44,7 +44,7 @@ export function SettingsPanel() {
       const data = await getAllSettings();
       setSettings({
         reminderStartTime: data.reminder_start_time || "09:30",
-        reportGenerateTime: data.report_generate_time || "18:00",
+        reportGenerateTime: data.report_generate_time || "04:00",
         reminderIntervalMinutes: Number(data.reminder_interval_minutes || "120"),
         holidayDisable: (data.holiday_disable || "true") === "true",
         apiKey: data.api_key || "",
@@ -87,7 +87,7 @@ export function SettingsPanel() {
       const reloaded = await getAllSettings();
       const verified: Settings = {
         reminderStartTime: reloaded.reminder_start_time || "09:30",
-        reportGenerateTime: reloaded.report_generate_time || "18:00",
+        reportGenerateTime: reloaded.report_generate_time || "04:00",
         reminderIntervalMinutes: Number(reloaded.reminder_interval_minutes || "120"),
         holidayDisable: (reloaded.holiday_disable || "true") === "true",
         apiKey: reloaded.api_key || "",

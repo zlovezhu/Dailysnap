@@ -22,7 +22,7 @@ pub async fn get_settings(_app: AppHandle) -> Result<AppSettings, String> {
     // Default settings - frontend will override with DB values
     Ok(AppSettings {
         reminder_start_time: "09:30".to_string(),
-        report_generate_time: "18:00".to_string(),
+        report_generate_time: "04:00".to_string(),
         reminder_interval_minutes: 120,
         holiday_disable: true,
         api_key: String::new(),

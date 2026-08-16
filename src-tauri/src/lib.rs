@@ -1,6 +1,7 @@
 mod commands;
 mod services;
 mod models;
+mod macos_window;
 
 use tauri::{Manager, WindowEvent};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -41,8 +42,23 @@ pub fn run() {
                 ('report_generate_time', '18:00'),
                 ('holiday_disable', 'true'),
                 ('api_key', ''),
-                ('api_base_url', 'https://api.openai.com/v1'),
-                ('model_name', 'gpt-4o-mini');",
+                ('api_base_url', 'https://api.deepseek.com/v1'),
+                ('model_name', 'deepseek-chat');",
+            kind: MigrationKind::Up,
+        },
+        // Migration 2: 升级弃用的 model 名 + base_url
+        // deepseek-chat / deepseek-reasoner 已于 2026-07-24 弃用，
+        // 统一升级到 deepseek-v4-flash；base_url 去掉 /v1。
+        // 用单语句 CASE WHEN（避免 tauri-plugin-sql 多语句 migration 的潜在问题）。
+        Migration {
+            version: 2,
+            description: "upgrade_model_to_deepseek_v4_flash",
+            sql: "UPDATE settings SET value = CASE \
+                       WHEN key = 'model_name' AND value IN ('deepseek-chat', 'deepseek-reasoner', 'gpt-4o-mini') THEN 'deepseek-v4-flash' \
+                       WHEN key = 'api_base_url' AND value IN ('https://api.deepseek.com/v1', 'https://api.deepseek.com/v4', 'https://api.openai.com/v1') THEN 'https://api.deepseek.com' \
+                       ELSE value \
+                   END \
+                   WHERE key IN ('model_name', 'api_base_url');",
             kind: MigrationKind::Up,
         },
     ];
@@ -67,6 +83,18 @@ pub fn run() {
             AiClient::new(mem.clone())
         })
         .setup(|app| {
+            // Strip NSVisualEffectView backdrop from the float-ball window only
+            // (not the main window — that one keeps its 14px rounded corners).
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("float-ball") {
+                    if let Ok(ns_window) = window.ns_window() {
+                        crate::macos_window::strip_window_chrome(ns_window as *mut std::ffi::c_void);
+                    }
+                }
+            }
+
             // Build tray menu
             let quit = MenuItem::with_id(app, "quit", "退出 DailySnap", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
@@ -166,11 +194,16 @@ pub fn run() {
             commands::reminder::copy_to_clipboard,
             commands::devtools::switch_tab,
             commands::cat::agent_turn,
+            commands::cat::agent_turn_stream,
             commands::cat::get_cat_state,
             commands::cat::mood_decay_tick,
             commands::cat::update_profile,
             commands::cat::get_profile,
+            commands::cat::get_conversation,
+            commands::cat::get_conversation_days,
+            commands::cat::get_conversation_before,
             commands::cat::is_onboarded,
+            commands::cat::complete_onboarding,
             commands::cat::get_memory_dir,
             commands::cat::write_long_term,
             commands::cat::write_daily_summary,

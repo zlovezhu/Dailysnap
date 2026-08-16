@@ -7,6 +7,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { getRecordsByDateRange, saveWeeklyReport, getWeeklyReport, type RecordRow } from "../services/db";
 import { generateWeeklyReport } from "../services/ai";
+import { getTodayKey } from "../services/date";
 
 function getWeekRange(date: Date): { start: Date; end: Date; startStr: string; endStr: string } {
   const d = new Date(date);
@@ -75,10 +76,7 @@ export function WeeklyPanel() {
   };
 
   const days = ["一", "二", "三", "四", "五", "六", "日"];
-  const fmtToday = (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  })();
+  const fmtToday = getTodayKey();
   const dayCounts = days.map((_, i) => {
     const dayDate = new Date(weekRange.start);
     dayDate.setDate(weekRange.start.getDate() + i);

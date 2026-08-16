@@ -1,6 +1,6 @@
-use tauri::State;
+use tauri::{State, AppHandle, Manager, Emitter};
 use crate::services::ai_client::{AiClient, AgentAction};
-use crate::services::memory::{MemoryService, UserProfile};
+use crate::services::memory::UserProfile;
 use serde::Serialize;
 
 #[tauri::command]
@@ -10,6 +10,7 @@ pub async fn sync_ai_config(
     base_url: String,
     model: String,
 ) -> Result<(), String> {
+    eprintln!("[sync_ai_config] api_key.len={} base_url={} model={}", api_key.len(), base_url, model);
     ai_client.update_config(&api_key, &base_url, &model).await;
     Ok(())
 }
@@ -26,22 +27,23 @@ pub struct CatStateView {
 #[tauri::command]
 pub async fn agent_turn(
     ai_client: State<'_, AiClient>,
-    memory: State<'_, MemoryService>,
     user_message: String,
     mode: Option<String>,
+    followup_round: Option<i32>,
 ) -> Result<AgentAction, String> {
     let extra = if mode.as_deref() == Some("onboarding") {
         Some(ONBOARDING_INSTRUCTIONS)
     } else { None };
 
-    let action = ai_client.agent_turn(&user_message, extra).await
+    let round = followup_round.unwrap_or(0);
+    let action = ai_client.agent_turn(&user_message, extra, round).await
         .map_err(|e| e.to_string())?;
 
     // Persist profile hints if onboarding
     if mode.as_deref() == Some("onboarding") {
-        parse_onboarding_reply(&action.message, &memory).await;
+        parse_onboarding_reply(&action.message, &ai_client.memory).await;
         if action.message.contains("[ONBOARDING_DONE]") {
-            memory.update_profile_field("onboarded", "true").await;
+            ai_client.memory.update_profile_field("onboarded", "true").await;
         }
     }
 
@@ -49,7 +51,7 @@ pub async fn agent_turn(
     for tc in &action.tool_calls {
         if tc.name == "save_record" {
             if let Some(content) = tc.arguments.get("content").and_then(|v| v.as_str()) {
-                memory.on_record(content).await;
+                ai_client.memory.on_record(content).await;
             }
         }
     }
@@ -58,8 +60,24 @@ pub async fn agent_turn(
 }
 
 #[tauri::command]
-pub async fn get_cat_state(memory: State<'_, MemoryService>) -> Result<CatStateView, String> {
-    let s = memory.cat_state.read().await.clone();
+pub async fn agent_turn_stream(
+    app: AppHandle,
+    ai_client: State<'_, AiClient>,
+    user_message: String,
+    mode: Option<String>,
+    followup_round: Option<i32>,
+) -> Result<(), String> {
+    let extra = if mode.as_deref() == Some("onboarding") {
+        Some(ONBOARDING_INSTRUCTIONS)
+    } else { None };
+    let round = followup_round.unwrap_or(0);
+    ai_client.agent_turn_streaming(app.clone(), &vec!["main".into(), "float-ball".into()], &user_message, extra, round).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_cat_state(ai_client: State<'_, AiClient>) -> Result<CatStateView, String> {
+    let s = ai_client.memory.cat_state.read().await.clone();
     let label = compute_state_label(s.mood, s.last_record_ts);
     Ok(CatStateView {
         mood: s.mood,
@@ -71,52 +89,76 @@ pub async fn get_cat_state(memory: State<'_, MemoryService>) -> Result<CatStateV
 }
 
 #[tauri::command]
-pub async fn mood_decay_tick(memory: State<'_, MemoryService>) -> Result<(), String> {
-    memory.mood_decay_tick().await;
+pub async fn mood_decay_tick(ai_client: State<'_, AiClient>) -> Result<(), String> {
+    ai_client.memory.mood_decay_tick().await;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn update_profile(
-    memory: State<'_, MemoryService>,
+    ai_client: State<'_, AiClient>,
     key: String,
     value: String,
 ) -> Result<(), String> {
-    memory.update_profile_field(&key, &value).await;
+    ai_client.memory.update_profile_field(&key, &value).await;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn get_profile(memory: State<'_, MemoryService>) -> Result<serde_json::Value, String> {
-    let p = memory.profile.read().await.clone();
+pub async fn get_profile(ai_client: State<'_, AiClient>) -> Result<serde_json::Value, String> {
+    let p = ai_client.memory.profile.read().await.clone();
     Ok(serde_json::to_value(&p).unwrap_or(serde_json::json!({})))
 }
 
 #[tauri::command]
-pub async fn is_onboarded(memory: State<'_, MemoryService>) -> Result<bool, String> {
-    Ok(memory.profile.read().await.onboarded)
+pub async fn get_conversation(ai_client: State<'_, AiClient>) -> Result<Vec<crate::services::memory::ConversationMessage>, String> {
+    Ok(ai_client.memory.get_conversation().await)
 }
 
 #[tauri::command]
-pub async fn get_memory_dir(memory: State<'_, MemoryService>) -> Result<String, String> {
-    Ok(memory.memory_dir().to_string_lossy().to_string())
+pub async fn get_conversation_days(ai_client: State<'_, AiClient>, days: usize) -> Result<Vec<crate::services::memory::ConversationDay>, String> {
+    Ok(ai_client.memory.load_days(days).await)
+}
+
+#[tauri::command]
+pub async fn get_conversation_before(ai_client: State<'_, AiClient>, before_date: String, days: usize) -> Result<Vec<crate::services::memory::ConversationDay>, String> {
+    Ok(ai_client.memory.load_before(&before_date, days))
+}
+
+#[tauri::command]
+pub async fn is_onboarded(ai_client: State<'_, AiClient>) -> Result<bool, String> {
+    Ok(ai_client.memory.profile.read().await.onboarded)
+}
+
+#[tauri::command]
+pub async fn complete_onboarding(
+    ai_client: State<'_, AiClient>,
+    data: crate::services::memory::OnboardingData,
+) -> Result<(), String> {
+    ai_client.memory.complete_onboarding(&data).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_memory_dir(ai_client: State<'_, AiClient>) -> Result<String, String> {
+    Ok(ai_client.memory.memory_dir().to_string_lossy().to_string())
 }
 
 #[tauri::command]
 pub async fn write_long_term(
-    memory: State<'_, MemoryService>,
+    ai_client: State<'_, AiClient>,
     content: String,
 ) -> Result<(), String> {
-    memory.write_long_term(&content).map_err(|e| e.to_string())
+    ai_client.memory.write_long_term(&content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn write_daily_summary(
-    memory: State<'_, MemoryService>,
+    ai_client: State<'_, AiClient>,
     date: String,
     content: String,
 ) -> Result<(), String> {
-    memory.write_daily_summary(&date, &content).map_err(|e| e.to_string())
+    ai_client.memory.write_daily_summary(&date, &content).map_err(|e| e.to_string())
 }
 
 const ONBOARDING_INSTRUCTIONS: &str = r#"
@@ -144,7 +186,7 @@ fn compute_state_label(mood: i32, last_ts: i64) -> String {
     else { "sad".to_string() }
 }
 
-async fn parse_onboarding_reply(text: &str, memory: &MemoryService) {
+async fn parse_onboarding_reply(text: &str, memory: &crate::services::memory::MemoryService) {
     let p = memory.profile.read().await.clone();
 
     if p.occupation.is_empty() && (

@@ -4,7 +4,7 @@
 
 DailySnap 把"工作记录"做成桌宠养成——你随手记一句话，AI 帮你整理成时间线、日报、周报，猫也跟着成长。记忆是透明的 Markdown 文件，你能看到猫记住了你什么。
 
-> 当前版本：P0 完成 · 桌宠形态 + 三层记忆系统 + 意图识别 + Onboarding
+> 当前版本：P0 完成 · 桌宠形态 + 三层记忆系统 + 意图识别 + Onboarding + 上下文对话 + 日报自动补生成
 
 ## 核心特性
 
@@ -31,11 +31,23 @@ AI 用 function calling 自己判断该做什么，不写死规则：
 | 工具 | 触发场景 |
 |------|---------|
 | `save_record` | 用户分享工作进展 |
+| `followup` | 信息不够具体时追问（最多 2 轮） |
 | `search_memory` | 用户问过去的事（"我上周做了什么"） |
 | `generate_report` | 用户说"生成日报" |
 | `chat` | 用户闲聊、倾诉情绪 |
 
 每次 AI 回应前会自动读取 `profile.md` + 最近摘要作为上下文——猫记得你是谁。
+
+### 上下文感知对话
+- **问候语**：启动时根据最近记录 + 时间段生成问候语（纯函数、确定性、两端一致）
+- **追问**：信息不够具体时猫会追问（做什么/进展/卡点），追问文案由 AI 生成而非固定模板
+- **对话历史**：主窗口按天分组展示，昨天及更早的对话折叠成「折叠条」，点开可回看，往上滑懒加载更早的历史
+- **桌面猫与主窗口状态同步**：对话由 Rust 端单一事实来源管理，两端永远看到同一份对话
+
+### 日报自动补生成
+- 启动时静默补生成漏掉的日报（凌晨关机 / 几天没开程序也能补上）
+- 早上 6:00–12:00 检测到昨天有记录但没日报时，主动提醒补生成
+- AI 调用失败时自动重试，不把占位符内容写进历史
 
 ### Onboarding（第一次见面）
 - 第一次启动时猫主动开口："喵~ 你好呀！我是你的 DailySnap 小猫"
@@ -84,29 +96,35 @@ Dailysnap/
 │   │   ├── FloatBall.tsx         # 悬浮球（compact / expanded 2 状态）
 │   │   └── Cat.tsx               # 猫 SVG 组件（6 状态 + framer-motion 动画）
 │   ├── services/
-│   │   ├── ai.ts                 # AI 调用封装
-│   │   └── db.ts                 # SQLite 操作
+│   │   ├── ai.ts                 # AI 调用封装（含 retry + fallback）
+│   │   ├── db.ts                 # SQLite 操作
+│   │   ├── date.ts               # 日期边界工具（凌晨4点）
+│   │   ├── greeting.ts           # 上下文问候语生成（纯函数）
+│   │   └── reportBackfill.ts     # 日报补生成
 │   ├── hooks/useTheme.ts         # 亮/暗主题
+│   ├── hooks/useCatAnim.ts       # 猫动画状态机
 │   ├── stores/recordStore.ts     # Zustand 状态
 │   ├── styles/globals.css        # 设计 token（warm-tinted neutrals）
 │   └── utils/floatInteraction.ts # 浮球交互工具
 ├── src-tauri/                    # Rust 后端
 │   └── src/
 │       ├── services/
-│       │   ├── memory.rs         # 猫脑（三层 Markdown 文件 + CatState）
-│       │   ├── ai_client.rs      # AI client（function calling 4 工具）
+│       │   ├── memory.rs         # 猫脑（三层 Markdown 文件 + 对话状态）
+│       │   ├── ai_client.rs      # AI client（function calling + 流式 + retry）
 │       │   ├── scheduler.rs      # 提醒调度
 │       │   └── holiday.rs        # 节假日判断
-│       └── commands/
-│           ├── cat.rs            # agent_turn / get_cat_state / onboarding 等
-│           ├── ai.rs             # ai_chat（旧版兼容）
-│           ├── records.rs        # save_record / get_records_by_date
-│           ├── settings.rs       # get_settings / update_setting
-│           ├── reminder.rs       # show_float_ball / set_float_mode
-│           └── devtools.rs       # switch_tab（dev-only）
+│       ├── commands/
+│       │   ├── cat.rs            # agent_turn / get_cat_state / 对话命令 等
+│       │   ├── ai.rs             # ai_chat（旧版兼容）
+│       │   ├── records.rs        # save_record / get_records_by_date
+│       │   ├── settings.rs       # get_settings / update_setting
+│       │   ├── reminder.rs       # show_float_ball / set_float_mode
+│       │   └── devtools.rs       # switch_tab（dev-only）
+│       └── macos_window.rs       # macOS 无边框窗口处理
 └── ~/.dailysnap/memory/          # 用户记忆目录（自动创建）
     ├── profile.md
     ├── today.md
+    ├── conversation_YYYY-MM-DD.json  # 按天存的对话历史
     ├── daily-summaries/
     ├── long-term.md
     └── states.json
@@ -147,18 +165,22 @@ pnpm tauri dev
 ### 配置 AI
 1. 启动后第一次进入会触发 onboarding（猫主动聊天）
 2. 标题栏点齿轮 → AI 设置 → 填 API Key
-3. 推荐用 gpt-4o-mini 或国产兼容 OpenAI 协议的模型
+3. 推荐用 DeepSeek（`deepseek-v4-flash`）或任意 OpenAI 兼容协议的模型
 
 ## 路线图
 
 ### P0（已完成）
 - ✅ 猫脑（三层 Markdown 文件记忆系统）
-- ✅ 意图识别（function calling 4 工具）
+- ✅ 意图识别（function calling 5 工具，含 followup 追问）
 - ✅ Onboarding 流程（猫主动聊天认识你）
 - ✅ 养成机制（好感度 + 亲密度 + 心情值）
 - ✅ 猫 SVG（6 状态 + framer-motion 动画）
 - ✅ 导航方案 B（4 tab + 报告子导航）
 - ✅ 悬浮球精简（2 状态）
+- ✅ 上下文问候语（纯函数、两端一致）
+- ✅ 对话历史按天折叠（昨天折叠 + 上滑懒加载）
+- ✅ 日报自动补生成（凌晨关机也能补上）
+- ✅ 桌面猫与主窗口对话状态同步（单一事实来源）
 
 ### P1（计划中）
 - 📝 语音记录（按住悬浮球说话 → Whisper 转文字 → 存记录）

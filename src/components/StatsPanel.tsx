@@ -6,6 +6,7 @@ import {
 } from "recharts";
 import { getRecordsByDateRange, type RecordRow } from "../services/db";
 import { categoryLabel, CATEGORY_COLORS } from "../services/ai";
+import { getTodayKey } from "../services/date";
 
 function getWeekStart(): string {
   const now = new Date();
@@ -18,8 +19,7 @@ function getWeekStart(): string {
 }
 
 function getToday(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return getTodayKey();
 }
 
 function getLast30Days(): string {

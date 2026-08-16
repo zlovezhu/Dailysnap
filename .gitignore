@@ -20,3 +20,7 @@ Thumbs.db
 # Lock files (keep pnpm-lock.yaml)
 package-lock.json
 yarn.lock
+
+# Deploy config (server-side secrets)
+deploy/relay/.env
+deploy/nginx/html/downloads/*.dmg

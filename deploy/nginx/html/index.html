@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DailySnap 下载</title>
+  <style>
+    :root {
+      --bg: #fbf9f3;
+      --fg: #1f1d18;
+      --fg-soft: #5a554b;
+      --accent: #2a2520;
+      --border: #e6e1d3;
+      --card-bg: #ffffff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a1814;
+        --fg: #f0ece1;
+        --fg-soft: #a8a294;
+        --accent: #f0ece1;
+        --border: #2e2a22;
+        --card-bg: #211f1a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.6;
+      padding: 48px 20px;
+    }
+    .container { max-width: 640px; margin: 0 auto; }
+    .label {
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--fg-soft);
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 500;
+      margin: 0 0 12px;
+      letter-spacing: -0.01em;
+    }
+    p.sub {
+      color: var(--fg-soft);
+      margin: 0 0 32px;
+      font-size: 15px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      margin: 24px 0;
+    }
+    .download-btn {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--bg);
+      padding: 14px 28px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 15px;
+      transition: opacity 0.15s;
+    }
+    .download-btn:hover { opacity: 0.85; }
+    .meta {
+      font-size: 13px;
+      color: var(--fg-soft);
+      margin-top: 16px;
+    }
+    .meta strong { color: var(--fg); font-weight: 500; }
+    .steps {
+      margin: 32px 0;
+      counter-reset: step;
+    }
+    .step {
+      counter-increment: step;
+      position: relative;
+      padding: 0 0 16px 32px;
+      color: var(--fg-soft);
+      font-size: 14px;
+    }
+    .step::before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--bg);
+      font-size: 12px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .step strong { color: var(--fg); font-weight: 500; }
+    code {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      background: var(--border);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    footer {
+      margin-top: 48px;
+      font-size: 12px;
+      color: var(--fg-soft);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="label">DailySnap</div>
+    <h1>陪你上班的小黑猫</h1>
+    <p class="sub">随手记一句话，猫帮你整理成时间线、日报、周报。</p>
+
+    <div class="card">
+      <a class="download-btn" href="/downloads/DailySnap.dmg" download>下载 macOS 版本</a>
+      <div class="meta">
+        <strong>版本</strong> · macOS (Apple Silicon / Intel)<br />
+        <strong>大小</strong> · 约 70 MB<br />
+        <strong>要求</strong> · macOS 11+
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step"><strong>下载</strong> dmg 安装包，拖进 Applications 文件夹</div>
+      <div class="step">第一次打开时<strong>右键 → 打开</strong>（绕过未签名警告，<code>xattr -cr</code>）</div>
+      <div class="step">猫会主动跟你打招呼，<strong>第一次聊天</strong>就是 onboarding</div>
+      <div class="step">记一条 → 猫开心 ✨ · 2 小时没记 → 猫打哈欠</div>
+    </div>
+
+    <footer>MIT License · DailySnap · 记忆是你的，猫只是陪你</footer>
+  </div>
+</body>
+</html>

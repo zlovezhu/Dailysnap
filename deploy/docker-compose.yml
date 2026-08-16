@@ -1,0 +1,44 @@
+version: "3.8"
+
+# DailySnap 中转 + 下载服务
+# - relay: FastAPI 中转服务（OpenAI 兼容），用服务器的 deepseek key 转发
+# - nginx: 反向代理 /v1/ → relay；静态托管下载页和 .dmg
+#
+# 部署：
+#   1. cp relay/.env.example relay/.env，编辑填 RELAY_TOKEN / DEEPSEEK_API_KEY
+#   2. docker compose up -d --build
+#   3. 把 .dmg 拷到 nginx/html/downloads/
+
+services:
+  relay:
+    build: ./relay
+    container_name: dailysnap-relay
+    restart: unless-stopped
+    env_file:
+      - ./relay/.env
+    expose:
+      - "8000"
+    networks:
+      - dailysnap-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    build: ./nginx
+    container_name: dailysnap-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/html/downloads:/usr/share/nginx/html/downloads
+    depends_on:
+      - relay
+    networks:
+      - dailysnap-net
+
+networks:
+  dailysnap-net:
+    driver: bridge

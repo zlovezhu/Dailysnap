@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getAllSettings } from "./db";
+
+// 生产配置：走自建中转服务（不放真实 deepseek key，防逆向盗刷）。
+// RELAY_TOKEN 是中转服务的鉴权 token，泄露后可在服务端轮换。
+const RELAY_BASE_URL = "http://124.220.21.190/v1/";
+const RELAY_TOKEN = "afd993c8fa1ad430c0040f4232c4b5d795fcacdf6e13ef9bb1ddbcfb536077db";
+const RELAY_MODEL = "deepseek-v4-flash";
 
 /** Frontend fetch wrapper with retry for transient errors (network / 5xx).
  *  Retries up to 2 times with 1s, 2s backoff. 4xx errors are NOT retried. */
@@ -56,12 +61,6 @@ export async function aiChat(userMessage: string, step: string): Promise<string>
 }
 
 async function callAiDirect(userMessage: string, step: string): Promise<string> {
-  const settings = await getAllSettings();
-
-  if (!settings.api_key) {
-    return mockResponse(userMessage, step);
-  }
-
   const systemPrompt =
     step === "first_reply"
       ? `你是一个友好的工作记录助手。用户被提醒记录当前工作状态。
@@ -82,15 +81,15 @@ async function callAiDirect(userMessage: string, step: string): Promise<string> 
   ];
 
   try {
-    const baseUrl = settings.api_base_url.replace(/\/+$/, "");
+    const baseUrl = RELAY_BASE_URL.replace(/\/+$/, "");
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${settings.api_key}`,
+        Authorization: `Bearer ${RELAY_TOKEN}`,
       },
       body: JSON.stringify({
-        model: settings.model_name,
+        model: RELAY_MODEL,
         messages,
         temperature: 0.7,
         max_tokens: 200,
@@ -106,12 +105,6 @@ async function callAiDirect(userMessage: string, step: string): Promise<string> 
 }
 
 export async function generateReport(records: Array<{ content: string; created_at: string; user_followup_reply?: string | null; category?: string }>, date?: string): Promise<string> {
-  const settings = await getAllSettings();
-
-  if (!settings.api_key) {
-    return mockReport(records, date);
-  }
-
   const recordsText = records
     .map((r) => {
       const time = r.created_at.substring(11, 16);
@@ -138,15 +131,15 @@ export async function generateReport(records: Array<{ content: string; created_a
 ${recordsText}`;
 
   try {
-    const baseUrl = settings.api_base_url.replace(/\/+$/, "");
+    const baseUrl = RELAY_BASE_URL.replace(/\/+$/, "");
     const response = await fetchWithRetry(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${settings.api_key}`,
+        Authorization: `Bearer ${RELAY_TOKEN}`,
       },
       body: JSON.stringify({
-        model: settings.model_name,
+        model: RELAY_MODEL,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: "请根据以上记录生成今日工作日报" },
@@ -165,12 +158,6 @@ ${recordsText}`;
 }
 
 export async function generateWeeklyReport(records: Array<{ content: string; created_at: string; date: string; user_followup_reply?: string | null; category?: string }>): Promise<string> {
-  const settings = await getAllSettings();
-
-  if (!settings.api_key) {
-    return mockWeeklyReport(records);
-  }
-
   const groupedByDate = groupRecordsByDate(records);
   const recordsText = Object.entries(groupedByDate)
     .map(([date, dayRecords]) => {
@@ -198,15 +185,15 @@ export async function generateWeeklyReport(records: Array<{ content: string; cre
 ${recordsText}`;
 
   try {
-    const baseUrl = settings.api_base_url.replace(/\/+$/, "");
+    const baseUrl = RELAY_BASE_URL.replace(/\/+$/, "");
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${settings.api_key}`,
+        Authorization: `Bearer ${RELAY_TOKEN}`,
       },
       body: JSON.stringify({
-        model: settings.model_name,
+        model: RELAY_MODEL,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: "请根据以上记录生成本周工作周报" },
@@ -228,12 +215,6 @@ export async function chatWithRecords(
   question: string,
   records: Array<{ content: string; created_at: string; date: string; user_followup_reply?: string | null; category?: string }>
 ): Promise<string> {
-  const settings = await getAllSettings();
-
-  if (!settings.api_key) {
-    return mockChatResponse(question, records);
-  }
-
   const recordsText = records
     .map((r) => {
       const cat = r.category && r.category !== "other" ? `[${categoryLabel(r.category)}] ` : "";
@@ -254,15 +235,15 @@ ${recordsText}
 5. 不要编造记录中不存在的内容`;
 
   try {
-    const baseUrl = settings.api_base_url.replace(/\/+$/, "");
+    const baseUrl = RELAY_BASE_URL.replace(/\/+$/, "");
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${settings.api_key}`,
+        Authorization: `Bearer ${RELAY_TOKEN}`,
       },
       body: JSON.stringify({
-        model: settings.model_name,
+        model: RELAY_MODEL,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: question },

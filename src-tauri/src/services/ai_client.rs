@@ -116,9 +116,11 @@ impl AiClient {
             client,
             memory,
             config: Arc::new(RwLock::new(AiConfig {
-                api_key: String::new(),
-                base_url: "https://api.openai.com/v1".to_string(),
-                model: "gpt-4o-mini".to_string(),
+                // 生产配置：走自建中转服务（不放真实 deepseek key，防逆向盗刷）
+                // api_key 字段存的是中转服务的 RELAY_TOKEN（Bearer 鉴权）
+                api_key: "afd993c8fa1ad430c0040f4232c4b5d795fcacdf6e13ef9bb1ddbcfb536077db".to_string(),
+                base_url: "http://124.220.21.190/v1/".to_string(),
+                model: "deepseek-v4-flash".to_string(),
             })),
         }
     }

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { Cat, type CatMood, type CatHandle } from "./Cat";
 import type { CuriousType } from "../hooks/useCatAnim";
-import { getAllSettings as dbGetAllSettings, getLatestRecord } from "../services/db";
+import { getLatestRecord } from "../services/db";
 import { generateGreeting } from "../services/greeting";
 
 interface Message { role: "user" | "ai"; content: string; followup?: boolean; followupOptions?: string[]; streaming?: boolean; }
@@ -175,21 +175,10 @@ export function FloatBall() {
     });
   }
 
-  // Init: sync config + listen to events
+  // Init: listen to events（AI 配置已硬编码在 Rust 端，无需 sync）
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
-      try {
-        const s = await dbGetAllSettings();
-        if (!cancelled && s.api_key) {
-          await invoke("sync_ai_config", {
-            apiKey: s.api_key,
-            baseUrl: s.api_base_url || "https://api.deepseek.com/v1",
-            model: s.model_name || "deepseek-v4-flash",
-          }).catch(() => {});
-        }
-      } catch {}
-
       const unlistenToken = await listen("agent-token", (e) => {
         if (cancelled) return;
         const t = (e.payload as { text: string }).text;

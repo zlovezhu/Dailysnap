@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Moon, Sun, Eye, EyeOff } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import { getAllSettings, updateSetting as dbUpdateSetting } from "../services/db";
 import { useTheme } from "../hooks/useTheme";
 
@@ -9,7 +9,6 @@ interface Settings {
   reportGenerateTime: string;
   reminderIntervalMinutes: number;
   holidayDisable: boolean;
-  apiKey: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -17,7 +16,6 @@ const DEFAULT_SETTINGS: Settings = {
   reportGenerateTime: "04:00",
   reminderIntervalMinutes: 120,
   holidayDisable: true,
-  apiKey: "",
 };
 
 const INTERVAL_OPTIONS = [
@@ -34,7 +32,6 @@ export function SettingsPanel() {
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [showKey, setShowKey] = useState(false);
   const { theme, setTheme } = useTheme();
 
   useEffect(() => { loadSettings(); }, []);
@@ -47,7 +44,6 @@ export function SettingsPanel() {
         reportGenerateTime: data.report_generate_time || "04:00",
         reminderIntervalMinutes: Number(data.reminder_interval_minutes || "120"),
         holidayDisable: (data.holiday_disable || "true") === "true",
-        apiKey: data.api_key || "",
       });
       setIsDirty(false);
     } catch { /* use defaults */ }
@@ -90,14 +86,12 @@ export function SettingsPanel() {
         reportGenerateTime: reloaded.report_generate_time || "04:00",
         reminderIntervalMinutes: Number(reloaded.reminder_interval_minutes || "120"),
         holidayDisable: (reloaded.holiday_disable || "true") === "true",
-        apiKey: reloaded.api_key || "",
       };
       const matched =
         verified.reminderStartTime === settings.reminderStartTime &&
         verified.reportGenerateTime === settings.reportGenerateTime &&
         verified.reminderIntervalMinutes === settings.reminderIntervalMinutes &&
-        verified.holidayDisable === settings.holidayDisable &&
-        verified.apiKey === settings.apiKey;
+        verified.holidayDisable === settings.holidayDisable;
       if (!matched) { setSaveError("本地保存校验失败，请重试"); setSaved(false); return; }
 
       setSettings(verified);
@@ -273,36 +267,8 @@ export function SettingsPanel() {
           AI
         </div>
         <div>
-          <label style={{ display: "block", fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: "6px" }}>
-            API Key
-          </label>
-          <div style={{ position: "relative" }}>
-            <input
-              type={showKey ? "text" : "password"}
-              value={settings.apiKey}
-              onChange={(e) => updateSetting("apiKey", e.target.value)}
-              placeholder="sk-..."
-              style={{ ...inputStyle, fontFamily: "monospace", paddingRight: "36px" }}
-            />
-            <button
-              onClick={() => setShowKey(!showKey)}
-              style={{
-                position: "absolute",
-                right: "8px",
-                top: "50%",
-                transform: "translateY(-50%)",
-                border: "none",
-                background: "transparent",
-                color: "var(--text-tertiary)",
-                cursor: "pointer",
-                padding: "4px",
-              }}
-            >
-              {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
-            </button>
-          </div>
-          <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "6px" }}>
-            留空时使用本地规则生成；配置后可启用 AI 追问和日报生成
+          <p style={{ fontSize: "var(--text-sm)", color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+            AI 能力由 DailySnap 服务端提供，无需配置即可使用。
           </p>
         </div>
       </section>

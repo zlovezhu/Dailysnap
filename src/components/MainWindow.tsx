@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { motion, AnimatePresence } from "framer-motion";
-import { Moon, Sun, X, Settings, Bell, Sparkles, Eye, EyeOff, Pencil } from "lucide-react";
+import { Moon, Sun, X, Settings, Bell, Pencil } from "lucide-react";
 import { ChatPanel } from "./ChatPanel";
 import { TimelinePanel } from "./TimelinePanel";
 import { ReportPanel } from "./ReportPanel";
@@ -26,7 +26,7 @@ const REPORT_SUB_KEYS: ReportSubTab[] = ["daily", "weekly"];
 interface SettingsMenuProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (action: "reminder" | "ai" | "theme" | "profile") => void;
+  onSelect: (action: "reminder" | "theme" | "profile") => void;
 }
 
 function SettingsMenu({ open, onClose, onSelect }: SettingsMenuProps) {
@@ -46,7 +46,6 @@ function SettingsMenu({ open, onClose, onSelect }: SettingsMenuProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <MenuItem icon={<Bell size={13} />} label="提醒设置" onClick={() => { onClose(); onSelect("reminder"); }} />
-        <MenuItem icon={<Sparkles size={13} />} label="AI 设置" onClick={() => { onClose(); onSelect("ai"); }} />
         <div className="h-px" style={{ background: "var(--border)" }} />
         <MenuItem icon={<Pencil size={13} />} label="修改我的偏好" onClick={() => { onClose(); onSelect("profile"); }} />
         <MenuItem icon={<Moon size={13} />} label="主题切换" onClick={() => { onClose(); onSelect("theme"); }} />
@@ -78,8 +77,8 @@ function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: stri
   );
 }
 
-/* === Settings Modal (reminder / AI) === */
-function SettingsModal({ type, onClose }: { type: "reminder" | "ai" | null; onClose: () => void }) {
+/* === Settings Modal (reminder) === */
+function SettingsModal({ type, onClose }: { type: "reminder" | null; onClose: () => void }) {
   if (!type) return null;
   return (
     <AnimatePresence>
@@ -103,7 +102,7 @@ function SettingsModal({ type, onClose }: { type: "reminder" | "ai" | null; onCl
         >
           <div className="flex items-center justify-between" style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
             <div className="label-caps" style={{ color: "var(--text-tertiary)" }}>
-              {type === "reminder" ? "提醒设置" : "AI 设置"}
+              提醒设置
             </div>
             <button
               onClick={onClose}
@@ -118,7 +117,7 @@ function SettingsModal({ type, onClose }: { type: "reminder" | "ai" | null; onCl
             </button>
           </div>
           <div style={{ padding: "16px" }}>
-            {type === "reminder" ? <ReminderSettings onClose={onClose} /> : <AISettings onClose={onClose} />}
+            <ReminderSettings onClose={onClose} />
           </div>
         </motion.div>
       </motion.div>
@@ -210,160 +209,6 @@ function ReminderSettings({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AISettings({ onClose }: { onClose: () => void }) {
-  const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("https://api.deepseek.com");
-  const [model, setModel] = useState("deepseek-v4-flash");
-  const [showKey, setShowKey] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    dbGetAllSettings()
-      .then((data) => {
-        if (data.api_key) setApiKey(data.api_key);
-        if (data.api_base_url) setBaseUrl(data.api_base_url);
-        if (data.model_name) setModel(data.model_name);
-      })
-      .catch(() => {});
-  }, []);
-
-  const PRESETS: Array<{ label: string; url: string; model: string }> = [
-    { label: "DeepSeek (推荐)", url: "https://api.deepseek.com", model: "deepseek-v4-flash" },
-    { label: "OpenAI (国外)", url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-    { label: "月之暗面 Kimi", url: "https://api.moonshot.cn/v1", model: "kimi-k3" },
-    { label: "智谱 GLM-4", url: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
-    { label: "通义千问", url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-turbo" },
-  ];
-
-  const handleSave = async () => {
-    if (saving) return;
-    setSaving(true);
-    setSaved(false);
-    try {
-      // Write to DB (primary source of truth)
-      await dbUpdateSetting("api_key", apiKey);
-      await dbUpdateSetting("api_base_url", baseUrl);
-      await dbUpdateSetting("model_name", model);
-      // Also notify backend AI client (so agent_turn can use the new config)
-      await invoke("sync_ai_config", {
-        apiKey,
-        baseUrl,
-        model,
-      }).catch((err) => console.error("sync_ai_config failed:", err));
-      setSaved(true);
-      setTimeout(() => { setSaved(false); onClose(); }, 800);
-    } catch (err) {
-      console.error("save ai settings failed:", err);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-      <Field label="API Key">
-        <div style={{ position: "relative" }}>
-          <input
-            type={showKey ? "text" : "password"}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-..."
-            className="w-full px-3 text-sm rounded-md outline-none font-mono"
-            style={{
-              background: "var(--bg)", color: "var(--text)",
-              border: "1px solid var(--border)", paddingRight: "36px",
-              paddingTop: "12px", paddingBottom: "12px",
-              height: "42px", fontSize: "13px",
-            }}
-          />
-          <button
-            onClick={() => setShowKey(!showKey)}
-            className="flex items-center justify-center"
-            style={{
-              position: "absolute", right: "8px", top: "50%",
-              transform: "translateY(-50%)", background: "transparent",
-              border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "4px",
-            }}
-          >
-            {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-        </div>
-      </Field>
-
-      <Field label="API 接入点">
-        <input
-          type="text"
-          value={baseUrl}
-          onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder="https://api.openai.com/v1"
-          className="w-full px-3 text-sm rounded-md outline-none font-mono"
-          style={{
-            background: "var(--bg)", color: "var(--text)",
-            border: "1px solid var(--border)",
-            paddingTop: "12px", paddingBottom: "12px",
-            height: "42px", fontSize: "13px",
-          }}
-        />
-      </Field>
-
-      <Field label="模型">
-        <input
-          type="text"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder="gpt-4o-mini"
-          className="w-full px-3 text-sm rounded-md outline-none font-mono"
-          style={{
-            background: "var(--bg)", color: "var(--text)",
-            border: "1px solid var(--border)",
-            paddingTop: "12px", paddingBottom: "12px",
-            height: "42px", fontSize: "13px",
-          }}
-        />
-      </Field>
-
-      {PRESETS.map((p) => (
-        <button
-          key={p.url}
-          onClick={() => { setBaseUrl(p.url); setModel(p.model); }}
-          className="text-xs rounded-md transition-all"
-          style={{
-            padding: "8px 10px",
-            textAlign: "left",
-            background: baseUrl === p.url ? "var(--accent-soft)" : "transparent",
-            border: "1px solid var(--border)",
-            color: "var(--text)",
-            cursor: "pointer",
-          }}
-        >
-          <span style={{ fontWeight: 500 }}>{p.label}</span>
-          <span style={{ color: "var(--text-tertiary)", marginLeft: "8px", fontSize: "10px" }}>
-            {p.url} · {p.model}
-          </span>
-        </button>
-      ))}
-
-      <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "-6px", lineHeight: 1.5 }}>
-        留空时使用本地规则生成。点击下方预设可直接填入国内常用 API（DeepSeek、Kimi、智谱、通义）。
-      </p>
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className="mt-2 text-sm font-medium rounded-md transition-all flex items-center justify-center"
-        style={{
-          padding: "12px", height: "42px",
-          background: saved ? "var(--success)" : "var(--text)",
-          color: "var(--bg)", border: "none", cursor: saving ? "wait" : "pointer",
-          opacity: saving ? 0.7 : 1,
-        }}
-      >
-        {saving ? "保存中..." : saved ? "✓ 已保存" : "保存"}
-      </button>
-    </div>
-  );
-}
-
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -380,7 +225,7 @@ export function MainWindow() {
   const [reportSub, setReportSub] = useState<ReportSubTab>("daily");
   const [showLightReminder, setShowLightReminder] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsModal, setSettingsModal] = useState<"reminder" | "ai" | null>(null);
+  const [settingsModal, setSettingsModal] = useState<"reminder" | null>(null);
   // 首次使用 onboarding：null=加载中，false=需引导，true=已完成
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
   // 在已 onboarded 状态下，从设置里「修改我的偏好」进入 onboarding 时为 true
@@ -560,23 +405,9 @@ export function MainWindow() {
           ["reminder_interval_minutes", data.reminder_interval_minutes || "120"],
           ["report_generate_time", data.report_generate_time || "04:00"],
           ["holiday_disable", data.holiday_disable || "true"],
-          ["api_key", data.api_key || ""],
-          ["api_base_url", data.api_base_url || "https://api.deepseek.com"],
-          ["model_name", data.model_name || "deepseek-v4-flash"],
         ];
         for (const [key, value] of pairs) {
           await invoke("update_setting", { key, value });
-        }
-        // CRITICAL: also push the API key into the Rust AiClient state.
-        // Without this, the back-end AiClient starts with an empty key
-        // on every app launch and falls back to the mock reply, even
-        // though the DB already has the key saved.
-        if (data.api_key) {
-          await invoke("sync_ai_config", {
-            apiKey: data.api_key,
-            baseUrl: data.api_base_url || "https://api.deepseek.com",
-            model: data.model_name || "deepseek-v4-flash",
-          }).catch((err) => console.error("sync_ai_config failed:", err));
         }
       } catch (error) { console.error(error); }
     };
@@ -699,7 +530,7 @@ export function MainWindow() {
         />
       </div>
 
-      {/* Settings modal (reminder / AI) */}
+      {/* Settings modal (reminder) */}
       <SettingsModal type={settingsModal} onClose={() => setSettingsModal(null)} />
 
       <AnimatePresence>

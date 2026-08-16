@@ -24,8 +24,8 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Setup pnpm via corepack
-        run: corepack enable && corepack prepare pnpm@9 --activate
+      - name: Setup pnpm
+        run: npm install -g pnpm@9.15.9
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -33,7 +33,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Install dependencies
-        run: rm -f pnpm-lock.yaml && pnpm install
+        run: pnpm install
 
       - name: Build
         run: pnpm tauri build

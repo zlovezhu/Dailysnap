@@ -35,7 +35,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --prefer-offline
 
       - name: Build
         run: pnpm tauri build

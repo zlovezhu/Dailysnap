@@ -163,7 +163,7 @@ export function StatsPanel() {
                 interval={3} axisLine={{ stroke: "var(--border)" }} tickLine={false}
               />
               <YAxis tick={{ fontSize: 10, fill: "var(--text-tertiary)" }} axisLine={false} tickLine={false} width={28} />
-              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`${v} 条`, "记录"]} labelFormatter={(l) => `${l} 点`} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${v} 条`, "记录"]} labelFormatter={(l) => `${l} 点`} />
               <Bar dataKey="count" fill="var(--text)" radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>

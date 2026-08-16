@@ -33,7 +33,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Install dependencies
-        run: pnpm install --ignore-scripts
+        run: rm -f pnpm-lock.yaml && pnpm install
 
       - name: Build
         run: pnpm tauri build

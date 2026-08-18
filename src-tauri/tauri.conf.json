@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicepkg/aide/main/packages/aide-agent/.changesets/schema.json",
   "productName": "DailySnap",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.dailysnap.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -75,7 +75,10 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": 2
+    }
   },
   "plugins": {
     "sql": {

@@ -77,7 +77,10 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "webviewInstallMode": "embedBootstrapper"
+      "webviewInstallMode": {
+        "silent": true,
+        "type": "downloadBootstrapper"
+      }
     }
   },
   "plugins": {

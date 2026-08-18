@@ -1,10 +1,20 @@
 # DailySnap
 
-一只陪你上班的小橘猫。记一条，她就开心一点；不记，她会想你。
+<p align="center">
+  <img src="docs/images/cat-preview.png" width="200" alt="DailySnap 小猫" />
+</p>
+
+一只陪你上班的小橘猫。记一条，它就开心一点；不记，它会想你。
 
 DailySnap 把"工作记录"做成桌宠养成——你随手记一句话，AI 帮你整理成时间线、日报、周报，猫也跟着成长。记忆是透明的 Markdown 文件，你能看到猫记住了你什么。
 
 > 当前版本：P0 完成 · 桌宠形态 + 三层记忆系统 + 意图识别 + Onboarding + 上下文对话 + 日报自动补生成
+
+**🏠 官网**：<https://dailysnap.online/>　**⬇️ 下载**：<https://dailysnap.online/#download>
+
+<p align="center">
+  <img src="docs/images/app-icon.png" width="96" alt="DailySnap 应用图标" />
+</p>
 
 ## 核心特性
 

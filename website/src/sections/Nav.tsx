@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Github } from "lucide-react";
+import { GitBranch } from "lucide-react";
 import Cat from "../components/Cat";
 
 const links = [
@@ -51,7 +51,7 @@ export default function Nav() {
           rel="noreferrer"
           className="btn-ink flex items-center gap-2 px-3.5 py-2 text-[13px] font-medium"
         >
-          <Github size={15} />
+          <GitBranch size={15} />
           <span className="hidden sm:inline">GitHub</span>
         </a>
       </div>

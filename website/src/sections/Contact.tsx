@@ -1,10 +1,10 @@
 import { motion } from "framer-motion";
-import { ArrowUpRight, Bug, Github, MessageSquareHeart } from "lucide-react";
+import { ArrowUpRight, Bug, GitBranch, MessageSquareHeart } from "lucide-react";
 import Cat from "../components/Cat";
 
 const channels = [
   {
-    icon: Github,
+    icon: GitBranch,
     label: "GitHub 主页",
     desc: "@zlovezhu · 看看作者还在造什么",
     href: "https://github.com/zlovezhu",

@@ -32,10 +32,8 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/html:/usr/share/nginx/html
-      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - relay
     networks:
